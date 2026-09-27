@@ -1,0 +1,32 @@
+{
+  "topic": "PACS",
+  "name": "Primary Agricultural Credit Societies (PACS) Hub & Services",
+  "overview": "PACS are the village-level cooperative credit societies providing multi-dimensional agricultural credit, subsidized inputs (fertilizer, certified seeds), farm machinery hiring, and direct market linkage to small and marginal farmers.",
+  "services": [
+    {
+      "name": "Subsidized Fertilizer Distribution (IFFCO/KRIBHCO)",
+      "description": "Sale of subsidized Urea, DAP, and NPK fertilizers through Aadhaar biometric Point-of-Sale (POS) machines at government-controlled prices (e.g. ₹266.50 per 45kg Urea bag)."
+    },
+    {
+      "name": "Short-Term Crop Loans (KCC)",
+      "description": "Disbursement of concessional crop loans at 7% normal interest, effectively 4% with prompt repayment subvention."
+    },
+    {
+      "name": "Certified Seed & Pesticide Distribution",
+      "description": "Distribution of certified, high-yielding crop seeds with government subsidy verification."
+    },
+    {
+      "name": "Custom Hiring Centers (CHC) for Farm Equipment",
+      "description": "Tractors, rotavators, combine harvesters, and drones rented out to small farmers at nominal hourly rates."
+    },
+    {
+      "name": "National PACS Computerization Project",
+      "description": "Digitization of PACS on unified cloud ERP software directly linked to NABARD and District Central Cooperative Banks (DCCBs)."
+    }
+  ],
+  "fertilizer_rules": {
+    "urea_price_per_bag": "₹266.50 per 45kg bag",
+    "verification_mode": "Aadhaar authentication via POS machine mandatory",
+    "hoarding_helpline": "1800-180-1551"
+  }
+}

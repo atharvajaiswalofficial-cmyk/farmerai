@@ -1,0 +1,21 @@
+{
+  "topic": "Financial Literacy",
+  "name": "Rural Financial Literacy, KCC & Banking Guidance",
+  "overview": "Information on institutional credit, Kisan Credit Cards, interest subvention schemes, Self-Help Groups (SHGs), and safe banking practices to prevent rural predatory lending.",
+  "kcc_features": {
+    "normal_interest_rate": "7.0% per annum for loans up to ₹3 Lakh",
+    "interest_subvention": "3.0% additional interest subvention for prompt repayment",
+    "effective_interest_rate": "4.0% per annum",
+    "collateral_free_limit": "Up to ₹1.60 Lakh without collateral / mortgage (up to ₹3 Lakh under PACS tie-up)",
+    "validity": "5 years with annual review and progressive limit increase"
+  },
+  "shg_linkage": {
+    "nabard_scheme": "SHG-Bank Linkage Programme",
+    "collateral_free_loans": "Up to ₹10 Lakh to ₹20 Lakh for eligible women SHGs under DAY-NRLM."
+  },
+  "fraud_prevention": [
+    "Never share OTP, ATM PIN, or Aadhaar biometric authentication with unknown agents.",
+    "Always demand printed computerized POS receipt for fertilizer purchases and loan repayments.",
+    "Report fraudulent loan deductions to the Banking Ombudsman (RBI Helpline: 14448)."
+  ]
+}

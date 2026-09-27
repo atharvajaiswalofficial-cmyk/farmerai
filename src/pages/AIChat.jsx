@@ -1,0 +1,469 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
+import { api } from '../services/api';
+import { voiceService } from '../services/voice';
+import { 
+  Send, 
+  Sparkles, 
+  Bot, 
+  FileText, 
+  ExternalLink, 
+  Loader2, 
+  Globe, 
+  ShieldCheck, 
+  Trash2,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Compass,
+  CheckCircle2,
+  AlertCircle
+} from 'lucide-react';
+
+export default function AIChat() {
+  const { user, isAuthenticated } = useAuth();
+  const { currentLanguage, setLanguage, languages, getVoiceCode, t, openLanguageModal } = useLanguage();
+  
+  const [messages, setMessages] = useState([
+    {
+      id: 0,
+      sender: 'bot',
+      text: t('chat.greeting'),
+      language: currentLanguage,
+      grounded: true,
+      sources: []
+    }
+  ]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [speakingMsgId, setSpeakingMsgId] = useState(null);
+  const [micError, setMicError] = useState(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Update initial greeting when language changes if only default message is present
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0].id === 0) {
+        return [{
+          ...prev[0],
+          text: t('chat.greeting'),
+          language: currentLanguage
+        }];
+      }
+      return prev;
+    });
+  }, [currentLanguage]);
+
+  // Load chat history if logged in
+  useEffect(() => {
+    async function loadHistory() {
+      if (isAuthenticated) {
+        try {
+          const hist = await api.getChatHistory();
+          if (hist && hist.length > 0) {
+            const formatted = [];
+            formatted.push({
+              id: 'greeting',
+              sender: 'bot',
+              text: t('chat.greeting'),
+              language: currentLanguage,
+              grounded: true,
+              sources: []
+            });
+            [...hist].reverse().forEach((h) => {
+              formatted.push({
+                id: `q-${h.id}`,
+                sender: 'user',
+                text: h.question,
+                language: h.language
+              });
+              formatted.push({
+                id: `a-${h.id}`,
+                sender: 'bot',
+                text: h.answer,
+                topic: h.topic,
+                language: h.language,
+                grounded: true,
+                sources: []
+              });
+            });
+            setMessages(formatted);
+          }
+        } catch (err) {
+          console.warn('Could not load chat history:', err);
+        }
+      }
+    }
+    loadHistory();
+  }, [isAuthenticated]);
+
+  const handleSendMessage = async (e, overrideText = null, mode = 'text') => {
+    if (e) e.preventDefault();
+    const query = (overrideText || inputMessage).trim();
+    if (!query || isLoading) return;
+
+    voiceService.stopSpeaking();
+    setSpeakingMsgId(null);
+
+    const userMsgId = Date.now();
+    const newMessages = [
+      ...messages,
+      {
+        id: userMsgId,
+        sender: 'user',
+        text: query,
+        language: currentLanguage
+      }
+    ];
+
+    setMessages(newMessages);
+    setInputMessage('');
+    setIsLoading(true);
+
+    try {
+      const response = await api.sendChatMessage(query, currentLanguage, mode, user?.id);
+      const botMsgId = response.chat_id || Date.now() + 1;
+      const answerText = response.answer || response.message || response.response || 'Answer retrieved successfully.';
+      
+      setMessages([
+        ...newMessages,
+        {
+          id: botMsgId,
+          sender: 'bot',
+          text: answerText,
+          language: response.language || currentLanguage,
+          topic: response.topic,
+          source: response.source,
+          grounded: response.grounded,
+          ai_generated: response.ai_generated,
+          sources: response.sources || []
+        }
+      ]);
+
+      if (mode === 'voice' && answerText) {
+        const targetVoice = getVoiceCode();
+        setSpeakingMsgId(botMsgId);
+        if (response?.audio_url) {
+          voiceService.playAudioUrl(
+            response.audio_url,
+            () => setSpeakingMsgId(null),
+            () => {
+              voiceService.speak(answerText, targetVoice, () => setSpeakingMsgId(null));
+            }
+          );
+        } else {
+          voiceService.speak(answerText, targetVoice, () => {
+            setSpeakingMsgId(null);
+          });
+        }
+      }
+    } catch (err) {
+      setMessages([
+        ...newMessages,
+        {
+          id: Date.now() + 1,
+          sender: 'bot',
+          text: t('common.error'),
+          grounded: false,
+          sources: []
+        }
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleMicToggle = () => {
+    setMicError(null);
+    if (isRecording) {
+      voiceService.stopListening();
+      setIsRecording(false);
+    } else {
+      const voiceCode = getVoiceCode();
+      const started = voiceService.startListening(voiceCode, {
+        onResult: (res) => {
+          if (res.transcript) {
+            setInputMessage(res.transcript);
+          }
+        },
+        onFinalTranscript: (finalText) => {
+          setIsRecording(false);
+          handleSendMessage(null, finalText, 'voice');
+        },
+        onError: (err) => {
+          setIsRecording(false);
+          if (typeof err === 'string' && !err.includes('no-speech')) {
+            setMicError(err);
+          }
+        },
+        onEnd: () => {
+          setIsRecording(false);
+        }
+      });
+      if (started) {
+        setIsRecording(true);
+      }
+    }
+  };
+
+  const handleSpeakToggle = (msgId, text, lang) => {
+    if (speakingMsgId === msgId) {
+      voiceService.stopSpeaking();
+      setSpeakingMsgId(null);
+    } else {
+      setSpeakingMsgId(msgId);
+      const targetLang = getVoiceCode();
+      voiceService.speak(text, targetLang, () => {
+        setSpeakingMsgId(null);
+      });
+    }
+  };
+
+  const handleClearHistory = async () => {
+    try {
+      if (isAuthenticated) {
+        await api.clearChatHistory();
+      }
+      setMessages([
+        {
+          id: Date.now(),
+          sender: 'bot',
+          text: t('chat.greeting'),
+          language: currentLanguage,
+          grounded: true,
+          sources: []
+        }
+      ]);
+    } catch (err) {
+      console.warn('Failed to clear history:', err);
+    }
+  };
+
+  const quickQuestions = currentLanguage === 'hi' ? [
+    { label: 'पीएम फसल बीमा दरें', q: 'पीएम फसल बीमा योजना की प्रीमियम दर क्या है?' },
+    { label: '72 घंटे दावा नियम', q: 'फसल क्षति के बाद दावा करने की समय सीमा क्या है?' },
+    { label: 'पैक्स यूरिया खाद', q: 'पैक्स (PACS) से सब्सिडी वाली खाद लेने के नियम क्या हैं?' },
+    { label: 'केसीसी 4% ब्याज', q: 'किसान क्रेडिट कार्ड पर ब्याज दर और सब्सिडी क्या है?' }
+  ] : [
+    { label: 'PMFBY Rates', q: 'What is the PMFBY crop insurance premium rate?' },
+    { label: '72h Claim Rule', q: 'What is the deadline for PMFBY intimation?' },
+    { label: 'PACS Fertilizer', q: 'What services are provided by PACS for fertilizer?' },
+    { label: 'KCC 4% Subvention', q: 'What is KCC interest subvention rate?' }
+  ];
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-8.5rem)] max-w-4xl mx-auto bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden animate-fadeIn">
+      {/* Header bar */}
+      <div className="p-4 sm:px-6 bg-slate-900 text-white flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center text-white shadow-md shadow-emerald-600/30">
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold flex items-center gap-2">
+              <span>{t('chat.title')}</span>
+              <span className="text-[10px] bg-emerald-700/80 text-emerald-200 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
+                <CheckCircle2 className="w-2.5 h-2.5" />
+                <span>Grounded</span>
+              </span>
+            </h2>
+            <p className="text-[11px] text-slate-400">
+              {t('chat.sub')}
+            </p>
+          </div>
+        </div>
+
+        {/* Controls: Language Selector & Clear Chat */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openLanguageModal}
+            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-xl text-xs font-bold text-white transition-colors"
+          >
+            <Globe className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{languages[currentLanguage]?.native} ▾</span>
+          </button>
+
+          <button
+            onClick={handleClearHistory}
+            title={t('common.clear')}
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 rounded-xl transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Mic error banner if any */}
+      {micError && (
+        <div className="px-4 py-2 bg-rose-50 border-b border-rose-200 text-rose-700 text-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{micError}</span>
+          </div>
+          <button onClick={() => setMicError(null)} className="font-bold hover:underline">{t('common.dismiss')}</button>
+        </div>
+      )}
+
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-slate-50/50">
+        {messages.map((m) => (
+          <div
+            key={m.id}
+            className={`flex items-start gap-3 ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+          >
+            {m.sender === 'bot' && (
+              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 mt-1 shadow-xs">
+                <Bot className="w-4 h-4" />
+              </div>
+            )}
+
+            <div
+              className={`max-w-[85%] sm:max-w-xl p-4 rounded-2xl text-xs sm:text-sm leading-relaxed ${
+                m.sender === 'user'
+                  ? 'bg-emerald-600 text-white rounded-tr-none shadow-md shadow-emerald-600/10'
+                  : 'bg-white text-slate-800 border border-slate-200/80 rounded-tl-none shadow-xs'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="whitespace-pre-wrap flex-1">{m.text}</p>
+                {m.sender === 'bot' && (
+                  <button
+                    onClick={() => handleSpeakToggle(m.id, m.text, m.language)}
+                    title={speakingMsgId === m.id ? t('common.stopVoice') : t('common.listenAgain')}
+                    className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${
+                      speakingMsgId === m.id 
+                        ? 'bg-emerald-100 text-emerald-700 animate-pulse' 
+                        : 'text-slate-400 hover:text-emerald-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    {speakingMsgId === m.id ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                  </button>
+                )}
+              </div>
+
+              {m.topic && (
+                <div className="mt-2 flex items-center gap-1.5">
+                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-semibold flex items-center gap-1">
+                    <Compass className="w-3 h-3 text-emerald-600" />
+                    <span>{t('common.topic')}: {m.topic}</span>
+                  </span>
+                </div>
+              )}
+
+              {m.sources && m.sources.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>{t('common.officialSources')}:</span>
+                  </div>
+                  {m.sources.map((s, idx) => (
+                    <div
+                      key={idx}
+                      className="p-2 rounded-xl bg-slate-50 border border-slate-200/60 flex items-center justify-between text-[11px]"
+                    >
+                      <div className="flex items-center gap-1.5 text-slate-700 truncate mr-2">
+                        <FileText className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                        <span className="font-semibold truncate">{s.title || s.document_name}</span>
+                      </div>
+                      {s.source_url && (
+                        <a
+                          href={s.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-emerald-700 hover:text-emerald-800 font-semibold flex items-center gap-1 hover:underline flex-shrink-0"
+                        >
+                          <span>Portal</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {m.sender === 'user' && (
+              <div className="w-8 h-8 rounded-xl bg-slate-800 text-white flex items-center justify-center flex-shrink-0 mt-1 shadow-xs font-bold text-xs">
+                {user?.name?.[0] || 'U'}
+              </div>
+            )}
+          </div>
+        ))}
+
+        {isLoading && (
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 mt-1 shadow-xs">
+              <Bot className="w-4 h-4" />
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 rounded-tl-none flex items-center gap-2 text-xs text-slate-500">
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+              <span>{t('common.loading')}</span>
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Suggested quick questions */}
+      <div className="px-4 py-2 bg-white border-t border-slate-100 flex items-center gap-2 overflow-x-auto text-xs no-scrollbar">
+        {quickQuestions.map((item, idx) => (
+          <button
+            key={idx}
+            type="button"
+            onClick={() => handleSendMessage(null, item.q)}
+            className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-emerald-50 hover:text-emerald-800 text-slate-600 font-medium whitespace-nowrap transition-colors text-xs"
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Input container with Mic */}
+      <form onSubmit={(e) => handleSendMessage(e)} className="p-3 sm:p-4 bg-white border-t border-slate-200 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleMicToggle}
+          title={isRecording ? t('common.stopVoice') : t('common.startVoice')}
+          className={`p-3 rounded-2xl transition-all flex items-center justify-center ${
+            isRecording 
+              ? 'bg-rose-600 text-white animate-pulse shadow-md shadow-rose-600/30 ring-4 ring-rose-200' 
+              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+          }`}
+        >
+          {isRecording ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+        </button>
+
+        <input
+          type="text"
+          placeholder={
+            isRecording
+              ? t('voice.micListening')
+              : t('chat.inputPlaceholder')
+          }
+          value={inputMessage}
+          onChange={(e) => setInputMessage(e.target.value)}
+          className="flex-1 px-4 py-3 text-xs sm:text-sm bg-slate-50 rounded-2xl border border-slate-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all placeholder:text-slate-400"
+          disabled={isLoading}
+        />
+        
+        <button
+          type="submit"
+          disabled={isLoading || !inputMessage.trim()}
+          className="p-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          aria-label={t('common.send')}
+        >
+          {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+        </button>
+      </form>
+    </div>
+  );
+}

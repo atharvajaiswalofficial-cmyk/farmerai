@@ -1,0 +1,33 @@
+{
+  "topic": "PMFBY",
+  "name": "Pradhan Mantri Fasal Bima Yojana (PMFBY)",
+  "overview": "PMFBY is an actuarial premium based scheme where farmer pays very nominal premium and the balance premium is shared equally by the Central and State Governments. It provides comprehensive insurance cover against non-preventable natural risks from pre-sowing to post-harvest stages.",
+  "premium_rates": {
+    "Kharif": "2.0% of Sum Insured or actuarial rate, whichever is less",
+    "Rabi": "1.5% of Sum Insured or actuarial rate, whichever is less",
+    "Commercial_Horticultural": "5.0% of Sum Insured or actuarial rate, whichever is less"
+  },
+  "claim_intimation_deadline": "72 hours from the occurrence of localized disaster or post-harvest loss.",
+  "intimation_channels": [
+    "Crop Insurance National Toll-Free Helpline: 14447",
+    "Crop Insurance App (Farmer App on Google Play)",
+    "Nearest Bank Branch / PACS where premium was debited",
+    "District Agriculture Officer / Local Insurance Company Representative"
+  ],
+  "required_documents": [
+    "Aadhaar Card copy",
+    "Land ownership document (Khasra/Khatauni / Land Possession Certificate)",
+    "Sowing Certificate / Declaration verified by Patwari / Extension Worker",
+    "Cancelled Bank Cheque / Passbook copy with clear IFSC code"
+  ],
+  "faqs": [
+    {
+      "question": "What is the deadline to report crop loss under PMFBY?",
+      "answer": "Crop loss due to localized calamities (hailstorm, landslide, inundation, cloud burst) or post-harvest losses must be reported within 72 hours of the event occurrence."
+    },
+    {
+      "question": "What are the farmer premium rates under PMFBY?",
+      "answer": "The maximum farmer premium is capped at 2% for Kharif food and oilseed crops, 1.5% for Rabi food and oilseed crops, and 5% for annual commercial and horticultural crops."
+    }
+  ]
+}

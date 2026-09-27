@@ -1,0 +1,21 @@
+{
+  "topic": "Cooperative",
+  "name": "Cooperative Laws & Multi-State Cooperative Societies (MSCS) Act",
+  "overview": "Guidelines and member rights under the Multi-State Co-operative Societies (MSCS) Act 2002 and 2023 amendments, governing transparency, election procedures, and democratic member control in Indian agricultural cooperatives.",
+  "member_rights": [
+    "Right to vote: One member, one vote principle regardless of share capital held.",
+    "Right to inspect books: Right to examine annual audited balance sheet, profit and loss statement, and member register.",
+    "Right to participate in Annual General Meeting (AGM): Must be convened within 6 months of close of financial year.",
+    "Right to share in cooperative dividend and patronage bonus.",
+    "Right to file grievance with the Cooperative Ombudsman or Central Registrar."
+  ],
+  "agm_regulations": {
+    "notice_period": "Minimum 14 to 21 days written notice to all eligible members.",
+    "quorum": "As specified in bylaws (typically 1/5th of total active voting members).",
+    "mandatory_agenda": "Adoption of audit report, election of board directors, approval of annual budget, dividend declaration."
+  },
+  "dispute_redressal": {
+    "section": "Section 84 of MSCS Act 2002",
+    "authority": "Arbitrator appointed by Central Registrar of Co-operative Societies (CRCS)."
+  }
+}
