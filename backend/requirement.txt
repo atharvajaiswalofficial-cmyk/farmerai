@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+google-genai
+openai
+gTTS
+python-jose[cryptography]
+pypdf
