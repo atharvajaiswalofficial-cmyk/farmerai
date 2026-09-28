@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = "https://farmerai-2nic.onrender.com/api";
 
 function getAuthHeader() {
   const token = localStorage.getItem('sahayak_token');
