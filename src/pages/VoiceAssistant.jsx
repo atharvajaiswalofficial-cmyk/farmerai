@@ -1,508 +1,671 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useLanguage } from "../context/LanguageContext";
 import api from "../services/api";
 import voiceService from "../services/voice";
 
-const VoiceAssistant = ({
-    language = "hi",
-    voiceCode = "hi-IN",
-    conversationId = "default",
-    onResponse,
-}) => {
-    const [isListening, setIsListening] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [isSpeaking, setIsSpeaking] = useState(false);
+const VoiceAssistant = () => {
+    // ============================================================
+    // LANGUAGE
+    // ============================================================
 
-    const [transcript, setTranscript] = useState("");
-    const [response, setResponse] = useState("");
-    const [error, setError] = useState("");
+    const languageContext = useLanguage();
 
-    const conversationIdRef = useRef(
-        conversationId || "default"
-    );
+    const selectedLanguage =
+        languageContext?.language ||
+        languageContext?.currentLanguage ||
+        "hi";
+
+    const getVoiceCode = () => {
+        const language = String(
+            selectedLanguage || "hi"
+        ).toLowerCase();
+
+        const languageMap = {
+            en: "en-IN",
+            english: "en-IN",
+
+            hi: "hi-IN",
+            hindi: "hi-IN",
+
+            mr: "mr-IN",
+            marathi: "mr-IN",
+
+            gu: "gu-IN",
+            gujarati: "gu-IN",
+
+            pa: "pa-IN",
+            punjabi: "pa-IN",
+
+            bn: "bn-IN",
+            bengali: "bn-IN",
+
+            ta: "ta-IN",
+            tamil: "ta-IN",
+
+            te: "te-IN",
+            telugu: "te-IN",
+
+            kn: "kn-IN",
+            kannada: "kn-IN",
+
+            ml: "ml-IN",
+            malayalam: "ml-IN",
+
+            or: "or-IN",
+            odia: "or-IN",
+        };
+
+        return languageMap[language] || "hi-IN";
+    };
+
+    // ============================================================
+    // STATE
+    // ============================================================
+
+    const [isListening, setIsListening] =
+        useState(false);
+
+    const [isProcessing, setIsProcessing] =
+        useState(false);
+
+    const [isSpeaking, setIsSpeaking] =
+        useState(false);
+
+    const [transcript, setTranscript] =
+        useState("");
+
+    const [response, setResponse] =
+        useState("");
+
+    const [error, setError] =
+        useState("");
+
+    // ============================================================
+    // REFS
+    // ============================================================
 
     const mountedRef = useRef(true);
 
+    const conversationIdRef =
+        useRef(
+            `voice-${Date.now()}`
+        );
+
+    // Prevent duplicate queries
+    const lastQueryRef = useRef("");
+
     // ============================================================
-    // COMPONENT MOUNT
+    // MOUNT / UNMOUNT
     // ============================================================
 
     useEffect(() => {
         mountedRef.current = true;
-
-        conversationIdRef.current =
-            conversationId || "default";
 
         return () => {
             mountedRef.current = false;
 
             try {
                 voiceService.stopListening();
+            } catch (error) {
+                console.warn(
+                    "[VoiceAssistant] Stop listening cleanup:",
+                    error
+                );
+            }
+
+            try {
                 voiceService.stopSpeaking();
             } catch (error) {
                 console.warn(
-                    "[VoiceAssistant] Cleanup error:",
+                    "[VoiceAssistant] Stop speaking cleanup:",
                     error
                 );
             }
         };
-    }, [conversationId]);
-
-    // ============================================================
-    // LANGUAGE
-    // ============================================================
-
-    const getVoiceLanguage = () => {
-        if (!voiceCode) {
-            return "hi-IN";
-        }
-
-        return voiceCode;
-    };
+    }, []);
 
     // ============================================================
     // START LISTENING
     // ============================================================
 
-    const startListeningSession = async () => {
-        if (isListening || isProcessing) {
-            return;
-        }
+    const startListeningSession =
+        async () => {
+            console.log(
+                "[VoiceAssistant] 🎤 Starting voice input..."
+            );
 
-        console.log(
-            "[VoiceAssistant] 🎤 Starting microphone..."
-        );
+            setError("");
+            setTranscript("");
+            setResponse("");
 
-        setError("");
-        setTranscript("");
-        setResponse("");
-        setIsListening(true);
-        setIsProcessing(false);
+            // Check browser support
+            if (
+                !voiceService.isSupported()
+            ) {
+                const message =
+                    "Voice recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.";
 
-        try {
-            // Check browser support.
-            if (!voiceService.isSupported()) {
-                throw new Error(
-                    "Speech recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge."
+                console.error(
+                    "[VoiceAssistant]",
+                    message
+                );
+
+                setError(message);
+                return;
+            }
+
+            // Stop previous speech
+            try {
+                voiceService.stopSpeaking();
+            } catch (error) {
+                console.warn(
+                    "[VoiceAssistant] Could not stop previous speech:",
+                    error
                 );
             }
 
-            const selectedLanguage =
-                getVoiceLanguage();
+            setIsSpeaking(false);
+            setIsProcessing(false);
+            setIsListening(true);
+
+            const voiceCode =
+                getVoiceCode();
 
             console.log(
-                "[VoiceAssistant] Language:",
-                selectedLanguage
+                "[VoiceAssistant] Voice language:",
+                voiceCode
             );
 
-            await voiceService.startListening(
-                selectedLanguage,
-                {
-                    // ------------------------------------------------
-                    // Recognition started
-                    // ------------------------------------------------
+            try {
+                await voiceService.startListening(
+                    voiceCode,
+                    {
+                        // =========================================
+                        // START
+                        // =========================================
 
-                    onStart: () => {
-                        console.log(
-                            "[VoiceAssistant] 🎤 Microphone started"
-                        );
+                        onStart: () => {
+                            console.log(
+                                "[VoiceAssistant] 🎤 Microphone started"
+                            );
 
-                        if (
-                            mountedRef.current
-                        ) {
-                            setIsListening(true);
-                            setError("");
-                        }
-                    },
+                            if (
+                                mountedRef.current
+                            ) {
+                                setIsListening(
+                                    true
+                                );
 
-                    // ------------------------------------------------
-                    // Live transcript
-                    // ------------------------------------------------
+                                setError(
+                                    ""
+                                );
+                            }
+                        },
 
-                    onResult: (result) => {
-                        const text =
-                            result?.transcript ||
-                            "";
+                        // =========================================
+                        // LIVE RESULT
+                        // =========================================
 
-                        console.log(
-                            "[VoiceAssistant] Transcript:",
-                            text
-                        );
+                        onResult: (
+                            result
+                        ) => {
+                            const text =
+                                result?.transcript ||
+                                "";
 
-                        if (
-                            mountedRef.current
-                        ) {
-                            setTranscript(
+                            console.log(
+                                "[VoiceAssistant] Live transcript:",
                                 text
                             );
-                        }
-                    },
 
-                    // ------------------------------------------------
-                    // Final transcript
-                    // ------------------------------------------------
+                            if (
+                                mountedRef.current
+                            ) {
+                                setTranscript(
+                                    text
+                                );
+                            }
+                        },
 
-                    onFinalTranscript: (
-                        finalText
-                    ) => {
-                        console.log(
-                            "[VoiceAssistant] ================================="
-                        );
+                        // =========================================
+                        // FINAL RESULT
+                        // =========================================
 
-                        console.log(
-                            "[VoiceAssistant] ✅ FINAL TRANSCRIPT:"
-                        );
-
-                        console.log(
+                        onFinalTranscript: (
                             finalText
-                        );
+                        ) => {
+                            const cleanText =
+                                String(
+                                    finalText ||
+                                        ""
+                                )
+                                    .replace(
+                                        /\s+/g,
+                                        " "
+                                    )
+                                    .trim();
 
-                        console.log(
-                            "[VoiceAssistant] ================================="
-                        );
-
-                        if (
-                            mountedRef.current
-                        ) {
-                            setIsListening(
-                                false
+                            console.log(
+                                "[VoiceAssistant] =================================="
                             );
-                            setIsProcessing(
-                                true
+
+                            console.log(
+                                "[VoiceAssistant] 🎤 FINAL VOICE INPUT:"
                             );
-                            setTranscript(
-                                finalText
+
+                            console.log(
+                                cleanText
                             );
-                        }
 
-                        // Send actual transcript to backend.
-                        handleFinalTranscript(
-                            finalText
-                        );
-                    },
+                            console.log(
+                                "[VoiceAssistant] =================================="
+                            );
 
-                    // ------------------------------------------------
-                    // Error
-                    // ------------------------------------------------
+                            if (
+                                !cleanText
+                            ) {
+                                console.warn(
+                                    "[VoiceAssistant] Empty final transcript."
+                                );
 
-                    onError: (voiceError) => {
-                        console.error(
-                            "[VoiceAssistant] ❌ Voice error:",
+                                if (
+                                    mountedRef.current
+                                ) {
+                                    setIsListening(
+                                        false
+                                    );
+                                    setIsProcessing(
+                                        false
+                                    );
+                                }
+
+                                return;
+                            }
+
+                            if (
+                                mountedRef.current
+                            ) {
+                                setTranscript(
+                                    cleanText
+                                );
+
+                                setIsListening(
+                                    false
+                                );
+
+                                setIsProcessing(
+                                    true
+                                );
+                            }
+
+                            handleFinalTranscript(
+                                cleanText
+                            );
+                        },
+
+                        // =========================================
+                        // ERROR
+                        // =========================================
+
+                        onError: (
                             voiceError
-                        );
-
-                        if (
-                            mountedRef.current
-                        ) {
-                            setIsListening(
-                                false
-                            );
-                            setIsProcessing(
-                                false
+                        ) => {
+                            console.error(
+                                "[VoiceAssistant] ❌ Voice error:",
+                                voiceError
                             );
 
-                            setError(
-                                voiceError?.message ||
-                                    "Voice recognition failed."
+                            if (
+                                mountedRef.current
+                            ) {
+                                setIsListening(
+                                    false
+                                );
+
+                                setIsProcessing(
+                                    false
+                                );
+
+                                setError(
+                                    voiceError?.message ||
+                                        "Voice recognition failed."
+                                );
+                            }
+                        },
+
+                        // =========================================
+                        // END
+                        // =========================================
+
+                        onEnd: () => {
+                            console.log(
+                                "[VoiceAssistant] Voice recognition ended."
                             );
-                        }
-                    },
 
-                    // ------------------------------------------------
-                    // Recognition ended
-                    // ------------------------------------------------
-
-                    onEnd: () => {
-                        console.log(
-                            "[VoiceAssistant] Recognition ended"
-                        );
-
-                        if (
-                            mountedRef.current &&
-                            !isProcessing
-                        ) {
-                            setIsListening(
-                                false
-                            );
-                        }
-                    },
-                }
-            );
-        } catch (error) {
-            console.error(
-                "[VoiceAssistant] ❌ Could not start microphone:",
-                error
-            );
-
-            if (
-                mountedRef.current
-            ) {
-                setIsListening(false);
-                setIsProcessing(false);
-
-                setError(
-                    error?.message ||
-                        "Could not start microphone."
+                            if (
+                                mountedRef.current
+                            ) {
+                                setIsListening(
+                                    false
+                                );
+                            }
+                        },
+                    }
                 );
+            } catch (error) {
+                console.error(
+                    "[VoiceAssistant] ❌ Failed to start voice:",
+                    error
+                );
+
+                if (
+                    mountedRef.current
+                ) {
+                    setIsListening(
+                        false
+                    );
+
+                    setIsProcessing(
+                        false
+                    );
+
+                    setError(
+                        error?.message ||
+                            "Unable to access microphone."
+                    );
+                }
             }
-        }
-    };
+        };
 
     // ============================================================
     // STOP LISTENING
     // ============================================================
 
-    const stopListeningSession = () => {
-        console.log(
-            "[VoiceAssistant] Stopping microphone..."
-        );
-
-        try {
-            voiceService.stopListening();
-        } catch (error) {
-            console.error(
-                "[VoiceAssistant] Stop error:",
-                error
-            );
-        }
-
-        if (mountedRef.current) {
-            setIsListening(false);
-        }
-    };
-
-    // ============================================================
-    // HANDLE FINAL TRANSCRIPT
-    // ============================================================
-
-    const handleFinalTranscript = async (
-        finalText
-    ) => {
-        if (!finalText) {
-            console.warn(
-                "[VoiceAssistant] Empty transcript."
+    const stopListeningSession =
+        () => {
+            console.log(
+                "[VoiceAssistant] 🛑 Stopping voice input..."
             );
 
-            if (mountedRef.current) {
-                setIsProcessing(false);
-            }
-
-            return;
-        }
-
-        const queryText =
-            finalText
-                .replace(/\s+/g, " ")
-                .trim();
-
-        if (!queryText) {
-            if (mountedRef.current) {
-                setIsProcessing(false);
-            }
-
-            return;
-        }
-
-        console.log(
-            "[VoiceAssistant] Sending query:"
-        );
-
-        console.log(queryText);
-
-        await processVoiceQuery(
-            queryText
-        );
-    };
-
-    // ============================================================
-    // SEND QUERY TO API
-    // ============================================================
-
-    const processVoiceQuery = async (
-        queryText
-    ) => {
-        if (!queryText) {
-            return;
-        }
-
-        console.log(
-            "[VoiceAssistant] ================================="
-        );
-
-        console.log(
-            "[VoiceAssistant] 🚀 PROCESSING QUERY:"
-        );
-
-        console.log(
-            queryText
-        );
-
-        console.log(
-            "[VoiceAssistant] ================================="
-        );
-
-        if (mountedRef.current) {
-            setIsProcessing(true);
-            setError("");
-        }
-
-        try {
-            // Make sure microphone is stopped.
             try {
                 voiceService.stopListening();
             } catch (error) {
-                console.warn(
-                    "[VoiceAssistant] Stop recognition warning:",
+                console.error(
+                    "[VoiceAssistant] Stop error:",
                     error
                 );
             }
 
-            // --------------------------------------------------------
-            // API CALL
-            // --------------------------------------------------------
-
-            const result =
-                await api.sendChatMessage(
-                    queryText,
-                    language,
-                    "voice",
-                    null,
-                    conversationIdRef.current
-                );
-
-            console.log(
-                "[VoiceAssistant] API response:",
-                result
-            );
-
-            // --------------------------------------------------------
-            // Extract answer
-            // --------------------------------------------------------
-
-            const answer =
-                result?.answer ||
-                result?.message ||
-                result?.response ||
-                "";
-
-            if (!answer) {
-                throw new Error(
-                    "The AI did not return an answer."
+            if (
+                mountedRef.current
+            ) {
+                setIsListening(
+                    false
                 );
             }
+        };
 
-            console.log(
-                "[VoiceAssistant] 🤖 AI ANSWER:",
-                answer
-            );
+    // ============================================================
+    // FINAL TRANSCRIPT
+    // ============================================================
 
-            if (mountedRef.current) {
-                setResponse(answer);
+    const handleFinalTranscript =
+        async (text) => {
+            const query =
+                String(text || "")
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
+
+            if (!query) {
+                setIsProcessing(
+                    false
+                );
+                return;
             }
 
-            // Send answer to parent if required.
-            if (onResponse) {
+            // Prevent accidental duplicate query
+            if (
+                query.toLowerCase() ===
+                lastQueryRef.current.toLowerCase()
+            ) {
+                console.warn(
+                    "[VoiceAssistant] Duplicate query ignored:",
+                    query
+                );
+
+                setIsProcessing(
+                    false
+                );
+
+                return;
+            }
+
+            lastQueryRef.current =
+                query;
+
+            console.log(
+                "[VoiceAssistant] Sending voice query to API:",
+                query
+            );
+
+            await processVoiceQuery(
+                query
+            );
+        };
+
+    // ============================================================
+    // PROCESS QUERY
+    // ============================================================
+
+    const processVoiceQuery =
+        async (queryText) => {
+            if (!queryText) {
+                return;
+            }
+
+            setIsProcessing(true);
+            setError("");
+
+            try {
+                // Make sure microphone isn't still running.
                 try {
-                    onResponse(result);
-                } catch (callbackError) {
+                    voiceService.stopListening();
+                } catch (error) {
                     console.warn(
-                        "[VoiceAssistant] onResponse callback error:",
-                        callbackError
+                        "[VoiceAssistant] Stop warning:",
+                        error
                     );
                 }
-            }
 
-            // --------------------------------------------------------
-            // PLAY SERVER AUDIO
-            // --------------------------------------------------------
+                // =================================================
+                // SEND EXACT TRANSCRIPT TO BACKEND
+                // =================================================
 
-            if (result?.audio_url) {
                 console.log(
-                    "[VoiceAssistant] 🔊 Playing server audio..."
+                    "[VoiceAssistant] 🚀 POST /api/chat"
                 );
 
-                if (mountedRef.current) {
-                    setIsSpeaking(true);
-                }
-
-                try {
-                    await voiceService.playAudioUrl(
-                        result.audio_url
-                    );
-                } catch (audioError) {
-                    console.warn(
-                        "[VoiceAssistant] Server audio failed:",
-                        audioError
-                    );
-
-                    // Fallback to browser TTS.
-                    await speakAnswer(answer);
-                }
-
-                if (mountedRef.current) {
-                    setIsSpeaking(false);
-                }
-            } else {
-                // ----------------------------------------------------
-                // BROWSER TTS FALLBACK
-                // ----------------------------------------------------
-
-                await speakAnswer(answer);
-            }
-        } catch (error) {
-            console.error(
-                "[VoiceAssistant] ❌ Query processing failed:",
-                error
-            );
-
-            if (mountedRef.current) {
-                setError(
-                    error?.message ||
-                        "Unable to process your question."
+                console.log(
+                    "[VoiceAssistant] message:",
+                    queryText
                 );
+
+                console.log(
+                    "[VoiceAssistant] language:",
+                    selectedLanguage
+                );
+
+                console.log(
+                    "[VoiceAssistant] input_mode: voice"
+                );
+
+                const result =
+                    await api.sendChatMessage(
+                        queryText,
+                        selectedLanguage,
+                        "voice",
+                        null,
+                        conversationIdRef.current
+                    );
+
+                console.log(
+                    "[VoiceAssistant] ✅ API response:",
+                    result
+                );
+
+                // =================================================
+                // GET ANSWER
+                // =================================================
+
+                const answer =
+                    result?.answer ||
+                    result?.message ||
+                    result?.response ||
+                    "";
+
+                if (!answer) {
+                    throw new Error(
+                        "Sahayak AI did not return an answer."
+                    );
+                }
+
+                console.log(
+                    "[VoiceAssistant] 🤖 Answer:",
+                    answer
+                );
+
+                if (
+                    mountedRef.current
+                ) {
+                    setResponse(
+                        answer
+                    );
+                }
+
+                // =================================================
+                // SERVER AUDIO
+                // =================================================
+
+                if (
+                    result?.audio_url
+                ) {
+                    console.log(
+                        "[VoiceAssistant] 🔊 Playing server audio..."
+                    );
+
+                    if (
+                        mountedRef.current
+                    ) {
+                        setIsSpeaking(
+                            true
+                        );
+                    }
+
+                    try {
+                        await voiceService.playAudioUrl(
+                            result.audio_url
+                        );
+                    } catch (audioError) {
+                        console.warn(
+                            "[VoiceAssistant] Server audio failed. Using browser TTS.",
+                            audioError
+                        );
+
+                        await speakAnswer(
+                            answer
+                        );
+                    }
+
+                    if (
+                        mountedRef.current
+                    ) {
+                        setIsSpeaking(
+                            false
+                        );
+                    }
+                } else {
+                    // =================================================
+                    // BROWSER TTS FALLBACK
+                    // =================================================
+
+                    await speakAnswer(
+                        answer
+                    );
+                }
+            } catch (error) {
+                console.error(
+                    "[VoiceAssistant] ❌ API processing error:",
+                    error
+                );
+
+                if (
+                    mountedRef.current
+                ) {
+                    setError(
+                        error?.message ||
+                            "Unable to process your question."
+                    );
+                }
+            } finally {
+                if (
+                    mountedRef.current
+                ) {
+                    setIsProcessing(
+                        false
+                    );
+
+                    setIsListening(
+                        false
+                    );
+                }
             }
-        } finally {
-            if (mountedRef.current) {
-                setIsProcessing(false);
-                setIsListening(false);
-            }
-        }
-    };
+        };
 
     // ============================================================
     // SPEAK ANSWER
     // ============================================================
 
-    const speakAnswer = async (
-        answer
-    ) => {
-        if (!answer) {
-            return;
-        }
-
-        try {
-            console.log(
-                "[VoiceAssistant] 🔊 Speaking answer..."
-            );
-
-            if (mountedRef.current) {
-                setIsSpeaking(true);
+    const speakAnswer =
+        async (answer) => {
+            if (!answer) {
+                return;
             }
 
-            await voiceService.speak(
-                answer,
-                getVoiceLanguage()
-            );
-        } catch (error) {
-            console.error(
-                "[VoiceAssistant] TTS error:",
-                error
-            );
-        } finally {
-            if (mountedRef.current) {
-                setIsSpeaking(false);
+            try {
+                if (
+                    mountedRef.current
+                ) {
+                    setIsSpeaking(
+                        true
+                    );
+                }
+
+                console.log(
+                    "[VoiceAssistant] 🔊 Browser TTS..."
+                );
+
+                await voiceService.speak(
+                    answer,
+                    getVoiceCode()
+                );
+            } catch (error) {
+                console.error(
+                    "[VoiceAssistant] TTS error:",
+                    error
+                );
+            } finally {
+                if (
+                    mountedRef.current
+                ) {
+                    setIsSpeaking(
+                        false
+                    );
+                }
             }
-        }
-    };
+        };
 
     // ============================================================
     // STOP SPEAKING
@@ -513,87 +676,72 @@ const VoiceAssistant = ({
             voiceService.stopSpeaking();
         } catch (error) {
             console.warn(
-                "[VoiceAssistant] Stop speaking error:",
+                "[VoiceAssistant] Stop TTS error:",
                 error
             );
         }
 
-        if (mountedRef.current) {
-            setIsSpeaking(false);
-        }
+        setIsSpeaking(false);
     };
 
     // ============================================================
     // MICROPHONE BUTTON
     // ============================================================
 
-    const handleMicrophoneClick = async () => {
-        if (isSpeaking) {
-            stopSpeaking();
-            return;
-        }
+    const handleMicrophoneClick =
+        async () => {
+            if (isProcessing) {
+                return;
+            }
 
-        if (isProcessing) {
-            return;
-        }
+            if (isSpeaking) {
+                stopSpeaking();
+                return;
+            }
 
-        if (isListening) {
-            stopListeningSession();
-            return;
-        }
+            if (isListening) {
+                stopListeningSession();
+                return;
+            }
 
-        await startListeningSession();
-    };
+            await startListeningSession();
+        };
 
     // ============================================================
-    // QUICK TEST QUESTIONS
+    // QUICK QUESTIONS
     // ============================================================
 
     const quickQuestions = [
-        {
-            text:
-                "PM Kisan kya hai?",
-            label:
-                "PM Kisan kya hai?"
-        },
-        {
-            text:
-                "PM Kisan mein registration kaise karein?",
-            label:
-                "PM Kisan registration"
-        },
-        {
-            text:
-                "Kisan Credit Card kya hai?",
-            label:
-                "Kisan Credit Card"
-        },
-        {
-            text:
-                "Fasal Bima Yojana kya hai?",
-            label:
-                "Fasal Bima Yojana"
-        },
+        "PM Kisan kya hai?",
+        "PM Kisan mein registration kaise karein?",
+        "Kisan Credit Card kya hai?",
+        "Fasal Bima Yojana kya hai?",
     ];
 
-    // ============================================================
-    // QUICK QUESTION
-    // ============================================================
+    const handleQuickQuestion =
+        async (question) => {
+            if (
+                isListening ||
+                isProcessing
+            ) {
+                return;
+            }
 
-    const handleQuickQuestion = (
-        question
-    ) => {
-        if (
-            isListening ||
-            isProcessing
-        ) {
-            return;
-        }
+            console.log(
+                "[VoiceAssistant] Quick question:",
+                question
+            );
 
-        setTranscript(question);
+            setTranscript(
+                question
+            );
 
-        processVoiceQuery(question);
-    };
+            setError("");
+
+            await processVoiceQuery(
+                question
+            );
+        };
 
     // ============================================================
     // RENDER
@@ -601,30 +749,35 @@ const VoiceAssistant = ({
 
     return (
         <div className="w-full max-w-2xl mx-auto p-4">
-            {/* ---------------------------------------------------- */}
-            {/* MAIN CARD */}
-            {/* ---------------------------------------------------- */}
 
-            <div className="rounded-2xl border border-gray-200 bg-white shadow-lg p-6">
-                {/* ------------------------------------------------ */}
-                {/* TITLE */}
-                {/* ------------------------------------------------ */}
+            {/* ================================================== */}
+            {/* CARD */}
+            {/* ================================================== */}
+
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+
+                {/* ================================================== */}
+                {/* HEADER */}
+                {/* ================================================== */}
 
                 <div className="text-center mb-6">
+
                     <h2 className="text-2xl font-bold text-gray-900">
                         Sahayak AI
                     </h2>
 
-                    <p className="text-sm text-gray-500 mt-1">
-                        Ask your question using your voice
+                    <p className="text-gray-500 text-sm mt-1">
+                        आपका डिजिटल किसान सहायक
                     </p>
+
                 </div>
 
-                {/* ------------------------------------------------ */}
+                {/* ================================================== */}
                 {/* MICROPHONE */}
-                {/* ------------------------------------------------ */}
+                {/* ================================================== */}
 
                 <div className="flex flex-col items-center">
+
                     <button
                         type="button"
                         onClick={
@@ -632,6 +785,11 @@ const VoiceAssistant = ({
                         }
                         disabled={
                             isProcessing
+                        }
+                        aria-label={
+                            isListening
+                                ? "Stop listening"
+                                : "Start voice input"
                         }
                         className={`
                             relative
@@ -642,9 +800,9 @@ const VoiceAssistant = ({
                             items-center
                             justify-center
                             text-4xl
+                            shadow-xl
                             transition-all
                             duration-200
-                            shadow-lg
                             ${
                                 isListening
                                     ? "bg-red-500 text-white scale-110"
@@ -656,6 +814,7 @@ const VoiceAssistant = ({
                             }
                         `}
                     >
+
                         {isListening
                             ? "🎙️"
                             : isProcessing
@@ -664,7 +823,6 @@ const VoiceAssistant = ({
                             ? "🔊"
                             : "🎤"}
 
-                        {/* Listening animation */}
                         {isListening && (
                             <>
                                 <span className="absolute inset-0 rounded-full border-4 border-red-300 animate-ping opacity-50" />
@@ -672,61 +830,80 @@ const VoiceAssistant = ({
                                 <span className="absolute -inset-3 rounded-full border border-red-200 animate-pulse" />
                             </>
                         )}
+
                     </button>
 
-                    {/* Status */}
-                    <p className="mt-4 text-sm font-medium text-gray-600">
+                    {/* ================================================== */}
+                    {/* STATUS */}
+                    {/* ================================================== */}
+
+                    <p className="mt-4 text-sm font-medium text-gray-600 text-center">
+
                         {isListening
-                            ? "Listening... Speak now"
+                            ? "🎤 सुन रहा हूँ... बोलिए"
                             : isProcessing
-                            ? "Processing your question..."
+                            ? "⏳ जवाब तैयार हो रहा है..."
                             : isSpeaking
-                            ? "Speaking..."
-                            : "Tap the microphone to speak"}
+                            ? "🔊 जवाब सुनिए..."
+                            : "🎤 माइक्रोफोन दबाकर बोलें"}
+
                     </p>
+
                 </div>
 
-                {/* ------------------------------------------------ */}
+                {/* ================================================== */}
                 {/* ERROR */}
-                {/* ------------------------------------------------ */}
+                {/* ================================================== */}
 
                 {error && (
-                    <div className="mt-5 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
-                        <strong>
-                            Voice Error:
-                        </strong>{" "}
-                        {error}
+                    <div className="mt-6 p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
+
+                        <div className="font-semibold mb-1">
+                            Voice Error
+                        </div>
+
+                        <div>
+                            {error}
+                        </div>
+
                     </div>
                 )}
 
-                {/* ------------------------------------------------ */}
+                {/* ================================================== */}
                 {/* TRANSCRIPT */}
-                {/* ------------------------------------------------ */}
+                {/* ================================================== */}
 
                 {transcript && (
                     <div className="mt-6">
-                        <div className="text-xs font-semibold text-gray-500 uppercase mb-2">
-                            You said
+
+                        <div className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-2">
+                            आपने पूछा
                         </div>
 
-                        <div className="rounded-xl bg-gray-50 border border-gray-200 p-4 text-gray-800">
+                        <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 text-gray-800">
+
                             {transcript}
+
                         </div>
+
                     </div>
                 )}
 
-                {/* ------------------------------------------------ */}
-                {/* AI RESPONSE */}
-                {/* ------------------------------------------------ */}
+                {/* ================================================== */}
+                {/* RESPONSE */}
+                {/* ================================================== */}
 
                 {response && (
                     <div className="mt-5">
-                        <div className="text-xs font-semibold text-gray-500 uppercase mb-2">
+
+                        <div className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-2">
                             Sahayak AI
                         </div>
 
-                        <div className="rounded-xl bg-green-50 border border-green-200 p-4 text-gray-800 leading-relaxed">
+                        <div className="p-4 rounded-xl bg-green-50 border border-green-200 text-gray-800 leading-relaxed">
+
                             {response}
+
                         </div>
 
                         <button
@@ -736,23 +913,26 @@ const VoiceAssistant = ({
                                     response
                                 )
                             }
-                            className="mt-3 px-4 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700"
+                            className="mt-3 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm"
                         >
-                            🔊 Hear Answer
+                            🔊 जवाब सुनें
                         </button>
+
                     </div>
                 )}
 
-                {/* ------------------------------------------------ */}
+                {/* ================================================== */}
                 {/* QUICK QUESTIONS */}
-                {/* ------------------------------------------------ */}
+                {/* ================================================== */}
 
                 <div className="mt-7">
-                    <div className="text-xs font-semibold text-gray-500 uppercase mb-3">
+
+                    <div className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-3">
                         Try asking
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+
                         {quickQuestions.map(
                             (
                                 question,
@@ -763,65 +943,28 @@ const VoiceAssistant = ({
                                         index
                                     }
                                     type="button"
-                                    onClick={() =>
-                                        handleQuickQuestion(
-                                            question.text
-                                        )
-                                    }
                                     disabled={
                                         isListening ||
                                         isProcessing
                                     }
-                                    className="text-left px-4 py-3 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                                    onClick={() =>
+                                        handleQuickQuestion(
+                                            question
+                                        )
+                                    }
+                                    className="text-left p-3 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-gray-700"
                                 >
-                                    {question.label}
+                                    {question}
                                 </button>
                             )
                         )}
+
                     </div>
+
                 </div>
+
             </div>
 
-            {/* ---------------------------------------------------- */}
-            {/* DEBUG INFORMATION */}
-            {/* ---------------------------------------------------- */}
-
-            {process.env.NODE_ENV ===
-                "development" && (
-                <div className="mt-4 rounded-lg bg-gray-900 text-green-400 p-4 text-xs font-mono">
-                    <div>
-                        Listening:{" "}
-                        {String(
-                            isListening
-                        )}
-                    </div>
-
-                    <div>
-                        Processing:{" "}
-                        {String(
-                            isProcessing
-                        )}
-                    </div>
-
-                    <div>
-                        Speaking:{" "}
-                        {String(
-                            isSpeaking
-                        )}
-                    </div>
-
-                    <div>
-                        Language:{" "}
-                        {getVoiceLanguage()}
-                    </div>
-
-                    <div className="mt-2">
-                        Transcript:{" "}
-                        {transcript ||
-                            "(empty)"}
-                    </div>
-                </div>
-            )}
         </div>
     );
 };
