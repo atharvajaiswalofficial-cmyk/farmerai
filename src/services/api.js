@@ -1,5 +1,9 @@
 const API_BASE = "https://farmerai-2nic.onrender.com/api";
 
+// ============================================================
+// AUTH HEADER
+// ============================================================
+
 function getAuthHeader() {
     const token =
         localStorage.getItem("sahayak_token");
@@ -10,6 +14,10 @@ function getAuthHeader() {
           }
         : {};
 }
+
+// ============================================================
+// GENERIC REQUEST
+// ============================================================
 
 async function request(
     endpoint,
@@ -52,7 +60,7 @@ async function request(
             : await response.text();
 
     if (!response.ok) {
-        const errorMsg =
+        const errorMessage =
             data?.detail ||
             data?.message ||
             (typeof data === "string"
@@ -60,7 +68,7 @@ async function request(
                 : "An unexpected error occurred");
 
         const error =
-            new Error(errorMsg);
+            new Error(errorMessage);
 
         error.status =
             response.status;
@@ -72,6 +80,10 @@ async function request(
 
     return data;
 }
+
+// ============================================================
+// API
+// ============================================================
 
 const api = {
     // ============================================================
@@ -132,7 +144,7 @@ const api = {
         }),
 
     // ============================================================
-    // CHAT
+    // AI CHAT
     // ============================================================
 
     sendChatMessage: (
@@ -203,7 +215,7 @@ const api = {
         request("/sources"),
 
     // ============================================================
-    // RAG
+    // RAG SEARCH
     // ============================================================
 
     ragSearch: (
@@ -345,6 +357,10 @@ const api = {
                 method: "DELETE",
             }
         ),
+
+    // ============================================================
+    // HEALTH
+    // ============================================================
 
     getHealth: () =>
         request("/health"),
