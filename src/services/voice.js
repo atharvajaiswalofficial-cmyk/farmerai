@@ -1,5 +1,5 @@
 // Voice Service for Sahayak AI
-// Real-time hands-free voice assistant with Web Speech API STT and automatic TTS playback
+// Real-time hands-free voice assistant with Web Speech API STT and TTS
 
 import api from './api';
 
@@ -7,178 +7,448 @@ class VoiceService {
   constructor() {
     this.recognition = null;
     this.isListening = false;
-    this.synthesis = typeof window !== 'undefined' ? window.speechSynthesis : null;
+
+    this.synthesis =
+      typeof window !== 'undefined'
+        ? window.speechSynthesis
+        : null;
+
     this.currentUtterance = null;
     this.audioElement = null;
+
     this.silenceTimer = null;
+
+    // Prevent duplicate submission
     this.hasTriggeredFinal = false;
+
+    // Stores the complete FINAL transcript
     this.lastProcessedTranscript = '';
+
+    // Stores callbacks for current recognition session
+    this.callbacks = {};
   }
 
-  // Pre-unlock Audio context on user gesture for seamless autoplay
+  // ============================================================
+  // AUDIO UNLOCK
+  // ============================================================
+
   unlockAudio() {
     try {
       if (!this.audioElement) {
         this.audioElement = new Audio();
       }
-      // Silent play-pause to satisfy browser autoplay policy
-      this.audioElement.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+
+      // Silent audio used to satisfy browser autoplay policies
+      this.audioElement.src =
+        'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+
       const playPromise = this.audioElement.play();
+
       if (playPromise !== undefined) {
-        playPromise.then(() => {
-          this.audioElement.pause();
-        }).catch(() => {
-          // Ignore autoplay restriction warnings during silent unlock
-        });
+        playPromise
+          .then(() => {
+            try {
+              this.audioElement.pause();
+              this.audioElement.currentTime = 0;
+            } catch (e) {
+              // Ignore
+            }
+          })
+          .catch(() => {
+            // Browser may block silent autoplay.
+            // This is not a fatal error.
+          });
       }
     } catch (e) {
-      // Ignore
+      // Ignore audio unlock errors
     }
   }
 
-  // ================= STT (Speech-to-Text) =================
+  // ============================================================
+  // SPEECH TO TEXT
+  // ============================================================
+
   initRecognition(language = 'hi-IN', callbacks = {}) {
-    const { onResult, onError, onEnd, onFinalTranscript } = callbacks;
-    const SpeechRecognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
-    
+    const {
+      onResult,
+      onError,
+      onEnd,
+      onFinalTranscript
+    } = callbacks;
+
+    const SpeechRecognition =
+      typeof window !== 'undefined' &&
+      (window.SpeechRecognition ||
+        window.webkitSpeechRecognition);
+
+    // Browser support check
     if (!SpeechRecognition) {
-      console.warn('Web Speech Recognition API not supported in this browser.');
+      console.warn(
+        'Web Speech Recognition API is not supported in this browser.'
+      );
+
+      if (onError) {
+        onError(
+          'Speech recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.'
+        );
+      }
+
       return null;
     }
 
     try {
+      // Stop previous recognition session
       if (this.recognition) {
-        try { this.recognition.abort(); } catch (e) {}
+        try {
+          this.recognition.abort();
+        } catch (e) {
+          // Ignore
+        }
       }
 
+      // Clear previous timer
+      if (this.silenceTimer) {
+        clearTimeout(this.silenceTimer);
+        this.silenceTimer = null;
+      }
+
+      // Create recognition instance
       this.recognition = new SpeechRecognition();
+
+      // IMPORTANT SETTINGS
       this.recognition.continuous = true;
+
+      // We need interim results so the UI can show live transcription,
+      // BUT interim results will NEVER be submitted to the AI.
       this.recognition.interimResults = true;
+
       this.recognition.lang = language;
 
+      // Keep enough alternatives for better browser recognition
+      this.recognition.maxAlternatives = 1;
+
+      // Save callbacks
+      this.callbacks = callbacks;
+
+      // Complete FINAL transcript
       let accumulatedFinal = '';
+
       this.hasTriggeredFinal = false;
+      this.lastProcessedTranscript = '';
+
+      // ------------------------------------------------------------
+      // SUBMIT FINAL QUERY
+      // ------------------------------------------------------------
 
       const finishAndSubmit = (textToSubmit) => {
-        if (this.hasTriggeredFinal) return;
+        if (this.hasTriggeredFinal) {
+          return;
+        }
+
         const cleanText = (textToSubmit || '').trim();
-        if (cleanText.length > 0) {
-          this.hasTriggeredFinal = true;
-          this.lastProcessedTranscript = cleanText;
-          if (this.silenceTimer) {
-            clearTimeout(this.silenceTimer);
-            this.silenceTimer = null;
-          }
-          this.stopListening();
-          if (onFinalTranscript) {
-            onFinalTranscript(cleanText);
-          }
+
+        if (!cleanText) {
+          return;
+        }
+
+        // Prevent duplicate submissions
+        this.hasTriggeredFinal = true;
+
+        this.lastProcessedTranscript = cleanText;
+
+        if (this.silenceTimer) {
+          clearTimeout(this.silenceTimer);
+          this.silenceTimer = null;
+        }
+
+        this.stopListening();
+
+        console.log(
+          '[VoiceService] FINAL QUERY:',
+          cleanText
+        );
+
+        if (onFinalTranscript) {
+          onFinalTranscript(cleanText);
         }
       };
 
+      // ------------------------------------------------------------
+      // RECOGNITION START
+      // ------------------------------------------------------------
+
       this.recognition.onstart = () => {
+        console.log(
+          '[VoiceService] Speech recognition started:',
+          language
+        );
+
         this.isListening = true;
         this.hasTriggeredFinal = false;
+        this.lastProcessedTranscript = '';
       };
+
+      // ------------------------------------------------------------
+      // RECOGNITION RESULT
+      // ------------------------------------------------------------
 
       this.recognition.onresult = (event) => {
         let interimTranscript = '';
+
+        // Start with previously confirmed final text
         let currentFinal = accumulatedFinal;
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const trans = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            currentFinal += (currentFinal ? ' ' : '') + trans;
+        for (
+          let i = event.resultIndex;
+          i < event.results.length;
+          i++
+        ) {
+          const result = event.results[i];
+
+          if (!result || !result[0]) {
+            continue;
+          }
+
+          const text = result[0].transcript || '';
+
+          if (result.isFinal) {
+            // ONLY FINAL RESULTS are added to accumulatedFinal
+            currentFinal +=
+              (currentFinal ? ' ' : '') + text.trim();
           } else {
-            interimTranscript += trans;
+            // Interim text is ONLY displayed
+            interimTranscript += text;
           }
         }
-        accumulatedFinal = currentFinal;
 
-        const totalTranscript = (currentFinal + ' ' + interimTranscript).trim();
+        // Save confirmed final transcript
+        accumulatedFinal = currentFinal.trim();
 
+        // Transcript shown in UI
+        const totalTranscript = (
+          accumulatedFinal +
+          ' ' +
+          interimTranscript
+        ).trim();
+
+        console.log(
+          '[VoiceService] Transcript:',
+          totalTranscript
+        );
+
+        // Update UI with live transcript
         if (onResult) {
           onResult({
-            final: currentFinal,
+            final: accumulatedFinal,
             interim: interimTranscript,
             transcript: totalTranscript
           });
         }
 
-        // Silence timer for end-of-speech auto-submission (750ms threshold)
-        if (totalTranscript.length > 0) {
-          if (this.silenceTimer) clearTimeout(this.silenceTimer);
+        // ==========================================================
+        // IMPORTANT:
+        //
+        // DO NOT submit interim results.
+        //
+        // Only submit when we have an actual FINAL result.
+        // ==========================================================
+
+        if (
+          accumulatedFinal &&
+          !this.hasTriggeredFinal
+        ) {
+          if (this.silenceTimer) {
+            clearTimeout(this.silenceTimer);
+          }
+
+          // Give browser time to finish recognition.
           this.silenceTimer = setTimeout(() => {
-            finishAndSubmit(totalTranscript);
-          }, 750);
+            if (
+              !this.hasTriggeredFinal &&
+              accumulatedFinal.trim()
+            ) {
+              finishAndSubmit(accumulatedFinal);
+            }
+          }, 1200);
         }
       };
+
+      // ------------------------------------------------------------
+      // SPEECH END
+      // ------------------------------------------------------------
 
       this.recognition.onspeechend = () => {
-        // Fast fallback timer when speech natively finishes
-        if (this.silenceTimer) clearTimeout(this.silenceTimer);
-        this.silenceTimer = setTimeout(() => {
-          if (!this.hasTriggeredFinal && accumulatedFinal.trim()) {
-            finishAndSubmit(accumulatedFinal);
-          }
-        }, 350);
+        console.log(
+          '[VoiceService] Native speech end detected.'
+        );
+
+        if (this.silenceTimer) {
+          clearTimeout(this.silenceTimer);
+        }
+
+        // Only FINAL transcript can be submitted.
+        if (
+          !this.hasTriggeredFinal &&
+          accumulatedFinal.trim()
+        ) {
+          this.silenceTimer = setTimeout(() => {
+            if (
+              !this.hasTriggeredFinal &&
+              accumulatedFinal.trim()
+            ) {
+              finishAndSubmit(accumulatedFinal);
+            }
+          }, 500);
+        }
       };
+
+      // ------------------------------------------------------------
+      // RECOGNITION ERROR
+      // ------------------------------------------------------------
 
       this.recognition.onerror = (event) => {
+        console.error(
+          '[VoiceService] Speech recognition error:',
+          event.error
+        );
+
         this.isListening = false;
-        if (this.silenceTimer) clearTimeout(this.silenceTimer);
-        // Ignore non-fatal 'no-speech' or 'aborted' errors
-        if (event.error === 'no-speech' || event.error === 'aborted') {
+
+        if (this.silenceTimer) {
+          clearTimeout(this.silenceTimer);
+          this.silenceTimer = null;
+        }
+
+        // These are usually not fatal
+        if (
+          event.error === 'no-speech' ||
+          event.error === 'aborted'
+        ) {
           return;
         }
+
         let userMessage = event.error;
+
         if (event.error === 'network') {
-          userMessage = 'Speech recognition network service is currently unavailable in this browser environment. You can use quick prompts or type in AI Chat.';
-        } else if (event.error === 'not-allowed') {
-          userMessage = 'Microphone permission was denied. Please allow microphone access in your browser settings.';
-        } else if (event.error === 'audio-capture') {
-          userMessage = 'No microphone was detected. Please verify your microphone connection.';
+          userMessage =
+            'Speech recognition network service is unavailable. Please check your internet connection or use Chrome/Edge.';
         }
-        if (onError) onError(userMessage);
+
+        if (event.error === 'not-allowed') {
+          userMessage =
+            'Microphone permission was denied. Please allow microphone access in your browser settings.';
+        }
+
+        if (event.error === 'audio-capture') {
+          userMessage =
+            'No microphone was detected. Please check your microphone connection.';
+        }
+
+        if (onError) {
+          onError(userMessage);
+        }
       };
 
+      // ------------------------------------------------------------
+      // RECOGNITION END
+      // ------------------------------------------------------------
+
       this.recognition.onend = () => {
+        console.log(
+          '[VoiceService] Speech recognition ended.'
+        );
+
         this.isListening = false;
-        if (this.silenceTimer) clearTimeout(this.silenceTimer);
-        if (onEnd) onEnd();
+
+        if (this.silenceTimer) {
+          clearTimeout(this.silenceTimer);
+          this.silenceTimer = null;
+        }
+
+        if (onEnd) {
+          onEnd();
+        }
       };
 
       return this.recognition;
+
     } catch (err) {
-      console.error('Failed to initialize speech recognition:', err);
+      console.error(
+        '[VoiceService] Failed to initialize speech recognition:',
+        err
+      );
+
+      if (onError) {
+        onError(
+          err.message ||
+          'Failed to initialize speech recognition.'
+        );
+      }
+
       return null;
     }
   }
 
-  startListening(language = 'hi-IN', callbacks = {}) {
-    // Stop any active TTS (barge-in support)
+  // ============================================================
+  // START LISTENING
+  // ============================================================
+
+  startListening(
+    language = 'hi-IN',
+    callbacks = {}
+  ) {
+    // Stop currently playing voice
     this.stopSpeaking();
+
+    // Unlock browser audio
     this.unlockAudio();
 
-    const rec = this.initRecognition(language, callbacks);
-    if (!rec) {
-      if (callbacks.onError) callbacks.onError('Speech recognition is not supported in this browser. Please use Chrome/Edge.');
+    const recognition = this.initRecognition(
+      language,
+      callbacks
+    );
+
+    if (!recognition) {
       return false;
     }
+
     try {
-      rec.start();
+      recognition.start();
+
+      console.log(
+        '[VoiceService] Listening started:',
+        language
+      );
+
       return true;
+
     } catch (err) {
-      if (callbacks.onError) callbacks.onError(err.message || 'Microphone error');
+      console.error(
+        '[VoiceService] Failed to start recognition:',
+        err
+      );
+
+      if (callbacks.onError) {
+        callbacks.onError(
+          err.message ||
+          'Unable to start microphone.'
+        );
+      }
+
       return false;
     }
   }
+
+  // ============================================================
+  // STOP LISTENING
+  // ============================================================
 
   stopListening() {
     if (this.silenceTimer) {
       clearTimeout(this.silenceTimer);
       this.silenceTimer = null;
     }
+
     if (this.recognition) {
       try {
         this.recognition.stop();
@@ -186,115 +456,367 @@ class VoiceService {
         // Ignore
       }
     }
+
     this.isListening = false;
   }
 
-  // ================= TTS (Text-to-Speech) =================
-  playAudioUrl(audioUrl, onEnd = null, onError = null) {
+  // ============================================================
+  // TEXT TO SPEECH
+  // ============================================================
+
+  playAudioUrl(
+    audioUrl,
+    onEnd = null,
+    onError = null
+  ) {
     this.stopSpeaking();
+
     if (!audioUrl) {
-      if (onEnd) onEnd();
+      if (onEnd) {
+        onEnd();
+      }
+
       return;
     }
 
     try {
       this.audioElement = new Audio(audioUrl);
+
       this.audioElement.onended = () => {
         this.audioElement = null;
-        if (onEnd) onEnd();
+
+        if (onEnd) {
+          onEnd();
+        }
       };
-      this.audioElement.onerror = (e) => {
+
+      this.audioElement.onerror = (error) => {
+        console.warn(
+          '[VoiceService] Audio URL playback failed:',
+          error
+        );
+
         this.audioElement = null;
-        if (onError) onError(e);
-        else if (onEnd) onEnd();
+
+        if (onError) {
+          onError(error);
+        } else if (onEnd) {
+          onEnd();
+        }
       };
-      
-      const playPromise = this.audioElement.play();
+
+      const playPromise =
+        this.audioElement.play();
+
       if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          console.warn('Auto-playback prevented by browser policy:', err);
-          if (onError) onError(err);
-          else if (onEnd) onEnd();
+        playPromise.catch((error) => {
+          console.warn(
+            '[VoiceService] Browser blocked audio playback:',
+            error
+          );
+
+          if (onError) {
+            onError(error);
+          } else if (onEnd) {
+            onEnd();
+          }
         });
       }
+
     } catch (err) {
-      console.error('Audio playback error:', err);
-      if (onEnd) onEnd();
+      console.error(
+        '[VoiceService] Audio playback error:',
+        err
+      );
+
+      if (onEnd) {
+        onEnd();
+      }
     }
   }
 
-  speak(text, lang = 'hi-IN', onEnd = null) {
-    this.stopSpeaking();
-    if (!text) return;
+  // ============================================================
+  // BROWSER TTS
+  // ============================================================
 
-    // Clean markdown formatting before speaking
+  speak(
+    text,
+    lang = 'hi-IN',
+    onEnd = null
+  ) {
+    this.stopSpeaking();
+
+    if (!text || !text.trim()) {
+      if (onEnd) {
+        onEnd();
+      }
+
+      return;
+    }
+
+    // Clean markdown before speaking
     const cleanText = text
       .replace(/[*_#`~[\]()]/g, '')
       .replace(/https?:\/\/\S+/g, '')
       .replace(/\n+/g, ' ')
       .trim();
 
+    // Browser Speech Synthesis
     if (this.synthesis) {
-      const utterance = new SpeechSynthesisUtterance(cleanText);
-      utterance.lang = lang;
-      utterance.rate = 0.95;
-      utterance.pitch = 1.0;
+      try {
+        const utterance =
+          new SpeechSynthesisUtterance(
+            cleanText
+          );
 
-      const voices = this.synthesis.getVoices();
-      const matchingVoice = voices.find(v => v.lang === lang || v.lang.startsWith(lang.split('-')[0]));
-      if (matchingVoice) {
-        utterance.voice = matchingVoice;
+        utterance.lang = lang;
+        utterance.rate = 0.95;
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+
+        // Get available voices
+        let voices =
+          this.synthesis.getVoices();
+
+        // Some browsers load voices asynchronously
+        if (!voices.length) {
+          this.synthesis.onvoiceschanged = () => {
+            voices =
+              this.synthesis.getVoices();
+
+            this.assignVoice(
+              utterance,
+              voices,
+              lang
+            );
+
+            this.currentUtterance =
+              utterance;
+
+            this.synthesis.speak(
+              utterance
+            );
+          };
+
+          return;
+        }
+
+        this.assignVoice(
+          utterance,
+          voices,
+          lang
+        );
+
+        utterance.onstart = () => {
+          console.log(
+            '[VoiceService] TTS started:',
+            lang
+          );
+        };
+
+        utterance.onend = () => {
+          console.log(
+            '[VoiceService] TTS finished.'
+          );
+
+          this.currentUtterance = null;
+
+          if (onEnd) {
+            onEnd();
+          }
+        };
+
+        utterance.onerror = (error) => {
+          console.warn(
+            '[VoiceService] Browser TTS error:',
+            error
+          );
+
+          this.currentUtterance = null;
+
+          // Try server-side TTS
+          this.playServerTTS(
+            cleanText,
+            lang.split('-')[0],
+            onEnd
+          );
+        };
+
+        this.currentUtterance =
+          utterance;
+
+        this.synthesis.speak(
+          utterance
+        );
+
+      } catch (err) {
+        console.error(
+          '[VoiceService] Browser TTS failed:',
+          err
+        );
+
+        this.playServerTTS(
+          cleanText,
+          lang.split('-')[0],
+          onEnd
+        );
       }
 
-      utterance.onend = () => {
-        this.currentUtterance = null;
-        if (onEnd) onEnd();
-      };
-
-      utterance.onerror = (err) => {
-        console.warn('Browser TTS error, falling back to server TTS:', err);
-        this.playServerTTS(cleanText, lang.split('-')[0], onEnd);
-      };
-
-      this.currentUtterance = utterance;
-      this.synthesis.speak(utterance);
     } else {
-      this.playServerTTS(cleanText, lang.split('-')[0], onEnd);
+      // No browser TTS
+      this.playServerTTS(
+        cleanText,
+        lang.split('-')[0],
+        onEnd
+      );
     }
   }
 
-  async playServerTTS(text, language = 'hi', onEnd = null) {
+  // ============================================================
+  // FIND MATCHING VOICE
+  // ============================================================
+
+  assignVoice(
+    utterance,
+    voices,
+    language
+  ) {
+    if (!voices || !voices.length) {
+      return;
+    }
+
+    const exactVoice = voices.find(
+      (voice) =>
+        voice.lang &&
+        voice.lang.toLowerCase() ===
+          language.toLowerCase()
+    );
+
+    if (exactVoice) {
+      utterance.voice = exactVoice;
+      return;
+    }
+
+    const languageCode =
+      language.split('-')[0].toLowerCase();
+
+    const languageVoice = voices.find(
+      (voice) =>
+        voice.lang &&
+        voice.lang
+          .toLowerCase()
+          .startsWith(languageCode)
+    );
+
+    if (languageVoice) {
+      utterance.voice = languageVoice;
+    }
+  }
+
+  // ============================================================
+  // SERVER TTS FALLBACK
+  // ============================================================
+
+  async playServerTTS(
+    text,
+    language = 'hi',
+    onEnd = null
+  ) {
     try {
-      const res = await api.synthesizeVoice(text, language);
-      if (res && res.audio_url) {
-        this.playAudioUrl(res.audio_url, onEnd);
-      } else if (onEnd) {
+      console.log(
+        '[VoiceService] Using server TTS:',
+        language
+      );
+
+      const res =
+        await api.synthesizeVoice(
+          text,
+          language
+        );
+
+      if (
+        res &&
+        res.audio_url
+      ) {
+        this.playAudioUrl(
+          res.audio_url,
+          onEnd
+        );
+      } else {
+        console.warn(
+          '[VoiceService] Server TTS returned no audio URL.'
+        );
+
+        if (onEnd) {
+          onEnd();
+        }
+      }
+
+    } catch (err) {
+      console.error(
+        '[VoiceService] Server TTS failed:',
+        err
+      );
+
+      if (onEnd) {
         onEnd();
       }
-    } catch (err) {
-      console.error('Server TTS failed:', err);
-      if (onEnd) onEnd();
     }
   }
 
+  // ============================================================
+  // STOP SPEAKING
+  // ============================================================
+
   stopSpeaking() {
-    if (this.synthesis && this.synthesis.speaking) {
-      try { this.synthesis.cancel(); } catch (e) {}
+    if (
+      this.synthesis &&
+      this.synthesis.speaking
+    ) {
+      try {
+        this.synthesis.cancel();
+      } catch (e) {
+        // Ignore
+      }
     }
+
     if (this.audioElement) {
       try {
         this.audioElement.pause();
         this.audioElement.currentTime = 0;
-      } catch (e) {}
+      } catch (e) {
+        // Ignore
+      }
+
       this.audioElement = null;
     }
+
     this.currentUtterance = null;
   }
 
+  // ============================================================
+  // CHECK SPEAKING STATE
+  // ============================================================
+
   isSpeaking() {
-    return (this.synthesis && this.synthesis.speaking) || !!(this.audioElement && !this.audioElement.paused);
+    return (
+      !!(
+        this.synthesis &&
+        this.synthesis.speaking
+      ) ||
+      !!(
+        this.audioElement &&
+        !this.audioElement.paused
+      )
+    );
   }
 }
 
-export const voiceService = new VoiceService();
+// ============================================================
+// SINGLETON
+// ============================================================
+
+export const voiceService =
+  new VoiceService();
+
 export default voiceService;
