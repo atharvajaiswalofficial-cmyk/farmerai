@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { api } from '../services/api';
-import { voiceService } from '../services/voice';
+import  api  from '../services/api';
+import  voiceService  from '../services/voice';
 import { 
   Send, 
   Sparkles, 
