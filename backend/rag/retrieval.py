@@ -1,115 +1,506 @@
-import os
-import re
 from typing import List, Dict, Any
-from database import get_document_chunks, get_connection
-from rag.embeddings import generate_multilingual_embedding, compute_semantic_distance
+
+from database import get_document_chunks
+from rag.embeddings import (
+    generate_multilingual_embedding,
+    compute_semantic_distance
+)
 from rag.reranking import rerank_chunks
 
+
+# -------------------------------------------------------------------
+# Domain keywords
+# -------------------------------------------------------------------
+
+DOMAIN_KEYWORDS = {
+    "PMFBY": [
+        "pmfby",
+        "crop insurance",
+        "crop insurance scheme",
+        "fasal bima",
+        "फसल बीमा",
+        "फसल",
+        "kharif",
+        "खरीफ",
+        "rabi",
+        "रबी",
+        "premium",
+        "प्रीमियम",
+        "claim",
+        "क्लेम",
+        "loss",
+        "damage",
+        "नुकसान",
+        "बारिश",
+        "बारिश से फसल",
+    ],
+
+    "PM-KISAN": [
+        "pm-kisan",
+        "pm kisan",
+        "pmkisan",
+        "samman nidhi",
+        "सम्मान निधि",
+        "किसान सम्मान निधि",
+        "installment",
+        "किस्त",
+        "beneficiary",
+        "लाभार्थी",
+        "farmer payment",
+        "किसान पैसा",
+    ],
+
+    "PACS": [
+        "pacs",
+        "primary agricultural credit society",
+        "fertilizer",
+        "fertiliser",
+        "urea",
+        "खाद",
+        "उर्वरक",
+        "बीज",
+        "credit society",
+        "agricultural credit",
+    ],
+
+    "Cooperative": [
+        "cooperative",
+        "co-operative",
+        "cooperative society",
+        "सहकारी",
+        "सहकारी समिति",
+        "समिति",
+        "member",
+        "सदस्य",
+        "bylaw",
+        "bye law",
+        "bye-laws",
+        "mscs",
+        "multi state cooperative",
+    ],
+
+    "Financial Literacy": [
+        "kcc",
+        "kisan credit card",
+        "किसान क्रेडिट कार्ड",
+        "loan",
+        "ऋण",
+        "interest",
+        "ब्याज",
+        "credit",
+        "subvention",
+        "loan interest",
+        "कर्ज",
+        "कर्ज़",
+    ],
+}
+
+
+# -------------------------------------------------------------------
+# Clearly unrelated queries
+# -------------------------------------------------------------------
+
+OUT_OF_DOMAIN_TERMS = [
+    "rocket",
+    "mars",
+    "quantum",
+    "supercomputer",
+    "atom",
+    "black hole",
+    "spacecraft",
+    "bitcoin",
+    "crypto",
+    "cryptocurrency",
+    "hollywood",
+]
+
+
+# -------------------------------------------------------------------
+# Detect likely category
+# -------------------------------------------------------------------
+
+def detect_category(query: str, category: str = None) -> str:
+    """
+    Determine the likely RAG category from the user's query.
+
+    Explicit category always takes priority.
+    """
+
+    if category:
+        return category
+
+    query_lower = query.lower()
+
+    matches = []
+
+    for category_name, keywords in DOMAIN_KEYWORDS.items():
+
+        score = 0
+
+        for keyword in keywords:
+            if keyword.lower() in query_lower:
+                score += 1
+
+        if score > 0:
+            matches.append((score, category_name))
+
+    if not matches:
+        return None
+
+    # Highest keyword match wins
+    matches.sort(reverse=True)
+
+    return matches[0][1]
+
+
+# -------------------------------------------------------------------
+# Out-of-domain detection
+# -------------------------------------------------------------------
+
+def is_out_of_domain(query: str) -> bool:
+    """
+    Reject clearly unrelated questions.
+
+    This is intentionally conservative.
+    """
+
+    query_lower = query.lower().strip()
+
+    if not query_lower:
+        return True
+
+    for term in OUT_OF_DOMAIN_TERMS:
+        if term in query_lower:
+            return True
+
+    return False
+
+
+# -------------------------------------------------------------------
+# Main RAG retrieval
+# -------------------------------------------------------------------
+
 def retrieve_rag_chunks(
-    query: str, 
-    category: str = None, 
-    top_k: int = 5, 
+    query: str,
+    category: str = None,
+    top_k: int = 5,
     distance_threshold: float = 0.45
 ) -> List[Dict[str, Any]]:
     """
-    Multilingual vector search over official document chunks with category filtering and distance gating.
+    Semantic retrieval over official document chunks.
+
+    IMPORTANT:
+    This function does NOT inject hardcoded answers.
+
+    The user's actual query is embedded and compared against
+    the available document chunks.
     """
-    query_lower = query.lower()
-    
-    # 1. Strict Out-of-Domain Filter (e.g. rocket, mars, quantum, supercomputer)
-    unrelated_terms = ["rocket", "mars", "quantum", "supercomputer", "atom", "space", "crypto", "bitcoin", "hollywood"]
-    if any(w in query_lower for w in unrelated_terms):
+
+    # ---------------------------------------------------------------
+    # Validate query
+    # ---------------------------------------------------------------
+
+    if not query or not query.strip():
+        print("[RAG] Empty query.")
         return []
 
-    # 2. Check Domain Topic
-    is_pmfby = any(w in query_lower for w in ["pmfby", "crop insurance", "premium", "fasal bima", "kharif", "rabi", "loss", "claim", "damage", "barish", "बारिश", "फसल"]) or (category and "pmfby" in category.lower())
-    is_pmkisan = any(w in query_lower for w in ["pm-kisan", "pm kisan", "kisan", "samman nidhi", "6,000", "6000", "installment", "किस्त"]) or (category and "pm-kisan" in category.lower())
-    is_pacs = any(w in query_lower for w in ["pacs", "fertilizer", "urea", "cooperative", "credit", "खाद", "उर्वरक"]) or (category and "pacs" in category.lower())
-    is_coop = any(w in query_lower for w in ["cooperative", "mscs", "member", "bylaw", "सहकारी", "समिति"]) or (category and "cooperative" in category.lower())
-    is_finance = any(w in query_lower for w in ["kcc", "loan", "interest", "subvention", "credit", "ऋण", "ब्याज"]) or (category and "finance" in category.lower())
+    query = query.strip()
 
-    # 3. Fetch curated domain baseline chunks
-    seed_chunks = []
-    if is_pmfby:
-        seed_chunks.append({
-            "title": "PMFBY Operational Guidelines",
-            "category": "PMFBY",
-            "department": "Ministry of Agriculture & Farmers Welfare",
-            "page": 12,
-            "source": "PMFBY Official Portal",
-            "source_url": "https://pmfby.gov.in",
-            "content": "Under PMFBY, the maximum farmer premium is capped at 2.0% for Kharif food and oilseed crops, 1.5% for Rabi food and oilseed crops, and 5.0% for annual commercial/horticultural crops. Intimation for localized loss must be given within 72 hours via helpline 14447 or the Crop Insurance App.",
-            "distance": 0.22
-        })
-    elif is_pmkisan:
-        seed_chunks.append({
-            "title": "PM-KISAN Operational Guidelines",
-            "category": "PM-KISAN",
-            "department": "Ministry of Agriculture & Farmers Welfare",
-            "page": 4,
-            "source": "PM-KISAN Official Portal",
-            "source_url": "https://pmkisan.gov.in",
-            "content": "PM-KISAN provides income support of ₹6,000 per year in three equal 4-monthly installments of ₹2,000 to eligible landholder farmers directly to Aadhaar seeded accounts via DBT.",
-            "distance": 0.25
-        })
-    elif is_pacs:
-        seed_chunks.append({
-            "title": "PACS Model Bye-Laws 2023",
-            "category": "PACS",
-            "department": "Ministry of Cooperation",
-            "page": 5,
-            "source": "Ministry of Cooperation",
-            "source_url": "https://cooperation.gov.in",
-            "content": "Primary Agricultural Credit Societies (PACS) provide subsidized fertilizers (Urea ₹266.50/45kg bag), short-term crop loans via KCC at 4% effective interest, certified seeds, and custom hiring farm tools.",
-            "distance": 0.28
-        })
-    elif is_coop:
-        seed_chunks.append({
-            "title": "MSCS Act 2002 & Amendments",
-            "category": "Cooperative",
-            "department": "Ministry of Cooperation",
-            "page": 18,
-            "source": "Ministry of Cooperation",
-            "source_url": "https://cooperation.gov.in",
-            "content": "Under the Multi-State Co-operative Societies (MSCS) Act, members hold democratic rights including 'One member, one vote', right to inspect annual audited balance sheets, and participate in AGMs.",
-            "distance": 0.29
-        })
-    elif is_finance:
-        seed_chunks.append({
-            "title": "Kisan Credit Card Operational Scheme",
-            "category": "Financial Literacy",
-            "department": "Ministry of Agriculture & NABARD",
-            "page": 3,
-            "source": "NABARD & RBI",
-            "source_url": "https://agricoop.nic.in",
-            "content": "Under Kisan Credit Card (KCC), crop loans up to ₹3 Lakh carry a normal interest rate of 7% with a 3% prompt repayment subvention, resulting in an effective interest rate of 4% per annum. Collateral-free limit is ₹1.60 Lakh.",
-            "distance": 0.27
-        })
+    print(f"[RAG] Query: {query}")
 
-    # 4. If query matched domain baseline, combine with database chunks
-    matched = [s for s in seed_chunks if s["distance"] <= distance_threshold]
-    
-    # Also search DB chunks if available
-    db_chunks = get_document_chunks(category=category, limit=100)
-    if db_chunks:
-        q_emb = generate_multilingual_embedding(query)
-        for c in db_chunks:
-            c_emb = c.get("embedding")
-            if not c_emb:
-                c_emb = generate_multilingual_embedding(c["content"])
-            dist = compute_semantic_distance(q_emb, c_emb)
-            if dist <= distance_threshold:
-                matched.append({
-                    "title": c["document_name"],
-                    "category": c["category"],
-                    "department": c["department"],
-                    "page": c["page_number"],
-                    "source": c["department"],
-                    "source_url": c["source_url"],
-                    "content": c["content"],
-                    "distance": dist
-                })
+    # ---------------------------------------------------------------
+    # Out-of-domain check
+    # ---------------------------------------------------------------
 
-    # 5. Rerank and return top-k
-    reranked = rerank_chunks(query, matched, top_k=top_k)
+    if is_out_of_domain(query):
+        print("[RAG] Query classified as clearly out-of-domain.")
+        return []
+
+    # ---------------------------------------------------------------
+    # Detect category
+    # ---------------------------------------------------------------
+
+    detected_category = detect_category(
+        query=query,
+        category=category
+    )
+
+    print(f"[RAG] Requested category: {category}")
+    print(f"[RAG] Detected category: {detected_category}")
+
+    # ---------------------------------------------------------------
+    # Load database chunks
+    # ---------------------------------------------------------------
+
+    try:
+        # IMPORTANT:
+        # Do NOT force a category filter here when category is not
+        # explicitly supplied.
+        #
+        # Otherwise a query can accidentally search only one category.
+
+        db_chunks = get_document_chunks(
+            category=category,
+            limit=500
+        )
+
+    except Exception as e:
+        print(f"[RAG] Database retrieval error: {e}")
+        return []
+
+    if not db_chunks:
+        print("[RAG] No document chunks found in database.")
+        return []
+
+    print(f"[RAG] Database chunks loaded: {len(db_chunks)}")
+
+    # ---------------------------------------------------------------
+    # Generate query embedding
+    # ---------------------------------------------------------------
+
+    try:
+        query_embedding = generate_multilingual_embedding(query)
+
+    except Exception as e:
+        print(f"[RAG] Query embedding error: {e}")
+        return []
+
+    if not query_embedding:
+        print("[RAG] Query embedding is empty.")
+        return []
+
+    # ---------------------------------------------------------------
+    # Semantic similarity search
+    # ---------------------------------------------------------------
+
+    matched_chunks = []
+
+    for chunk in db_chunks:
+
+        if not chunk:
+            continue
+
+        content = chunk.get("content", "")
+
+        if not content:
+            continue
+
+        # -----------------------------------------------------------
+        # Optional category preference
+        #
+        # We DO NOT completely reject other categories here.
+        # Semantic similarity should still decide relevance.
+        # -----------------------------------------------------------
+
+        chunk_category = chunk.get("category", "")
+
+        # -----------------------------------------------------------
+        # Existing embedding
+        # -----------------------------------------------------------
+
+        chunk_embedding = chunk.get("embedding")
+
+        try:
+
+            if not chunk_embedding:
+
+                chunk_embedding = generate_multilingual_embedding(
+                    content
+                )
+
+            if not chunk_embedding:
+                continue
+
+            distance = compute_semantic_distance(
+                query_embedding,
+                chunk_embedding
+            )
+
+        except Exception as e:
+            print(
+                f"[RAG] Embedding comparison failed "
+                f"for chunk: {e}"
+            )
+            continue
+
+        # -----------------------------------------------------------
+        # Distance filtering
+        # -----------------------------------------------------------
+
+        if distance > distance_threshold:
+            continue
+
+        # -----------------------------------------------------------
+        # Build normalized chunk
+        # -----------------------------------------------------------
+
+        normalized_chunk = {
+            "title": chunk.get(
+                "document_name",
+                chunk.get("title", "Official Document")
+            ),
+
+            "category": chunk_category,
+
+            "department": chunk.get(
+                "department",
+                "Government of India"
+            ),
+
+            "page": chunk.get(
+                "page_number",
+                chunk.get("page", "N/A")
+            ),
+
+            "source": chunk.get(
+                "department",
+                chunk.get("source", "Official Government Source")
+            ),
+
+            "source_url": chunk.get(
+                "source_url",
+                ""
+            ),
+
+            "content": content,
+
+            "distance": float(distance),
+        }
+
+        # -----------------------------------------------------------
+        # Category preference
+        #
+        # If the query clearly belongs to a category, slightly
+        # improve ranking for matching documents.
+        #
+        # We DO NOT replace their actual semantic distance.
+        # -----------------------------------------------------------
+
+        if detected_category:
+
+            if chunk_category:
+                if detected_category.lower() in str(
+                    chunk_category
+                ).lower():
+                    normalized_chunk["category_match"] = True
+                else:
+                    normalized_chunk["category_match"] = False
+            else:
+                normalized_chunk["category_match"] = False
+
+        else:
+            normalized_chunk["category_match"] = False
+
+        matched_chunks.append(normalized_chunk)
+
+    # ---------------------------------------------------------------
+    # Nothing relevant found
+    # ---------------------------------------------------------------
+
+    if not matched_chunks:
+        print(
+            f"[RAG] No chunks passed distance threshold "
+            f"{distance_threshold}."
+        )
+
+        return []
+
+    # ---------------------------------------------------------------
+    # Remove duplicates
+    # ---------------------------------------------------------------
+
+    unique_chunks = []
+
+    seen = set()
+
+    for chunk in matched_chunks:
+
+        content_key = (
+            chunk.get("title", ""),
+            chunk.get("page", ""),
+            chunk.get("content", "")[:300]
+        )
+
+        if content_key in seen:
+            continue
+
+        seen.add(content_key)
+        unique_chunks.append(chunk)
+
+    matched_chunks = unique_chunks
+
+    # ---------------------------------------------------------------
+    # Sort by semantic distance first
+    # ---------------------------------------------------------------
+
+    matched_chunks.sort(
+        key=lambda x: x.get("distance", 999)
+    )
+
+    print(
+        f"[RAG] {len(matched_chunks)} chunks passed "
+        f"semantic filtering."
+    )
+
+    # ---------------------------------------------------------------
+    # Show top candidates for debugging
+    # ---------------------------------------------------------------
+
+    for index, chunk in enumerate(
+        matched_chunks[:10],
+        start=1
+    ):
+
+        print(
+            f"[RAG] Candidate {index}: "
+            f"{chunk.get('title')} | "
+            f"category={chunk.get('category')} | "
+            f"distance={chunk.get('distance'):.4f}"
+        )
+
+    # ---------------------------------------------------------------
+    # Reranking
+    # ---------------------------------------------------------------
+
+    try:
+
+        reranked = rerank_chunks(
+            query,
+            matched_chunks,
+            top_k=top_k
+        )
+
+    except Exception as e:
+
+        print(f"[RAG] Reranking error: {e}")
+
+        # Safe fallback:
+        # use semantic ranking if reranker fails.
+
+        reranked = matched_chunks[:top_k]
+
+    # ---------------------------------------------------------------
+    # Final result
+    # ---------------------------------------------------------------
+
+    if not reranked:
+        print("[RAG] Reranker returned no results.")
+        return []
+
+    print(
+        f"[RAG] Final retrieved chunks: "
+        f"{len(reranked)}"
+    )
+
+    for index, chunk in enumerate(
+        reranked,
+        start=1
+    ):
+
+        print(
+            f"[RAG] Final {index}: "
+            f"{chunk.get('title')} | "
+            f"distance={chunk.get('distance', 'N/A')}"
+        )
+
     return reranked
