@@ -3,6 +3,7 @@
 class VoiceService {
     constructor() {
         this.recognition = null;
+
         this.isListening = false;
         this.isSpeakingState = false;
 
@@ -12,21 +13,22 @@ class VoiceService {
         this.interimTranscript = "";
 
         this.submitTimer = null;
+
         this.lastSubmittedText = "";
 
-        this.shouldSubmit = false;
         this.manualStop = false;
+        this.shouldSubmit = false;
 
-        this.currentLanguage = "en-IN";
+        this.currentLanguage = "hi-IN";
 
-        this.initRecognition();
+        this.initializeRecognition();
     }
 
     // ============================================================
     // INITIALIZE SPEECH RECOGNITION
     // ============================================================
 
-    initRecognition() {
+    initializeRecognition() {
         if (typeof window === "undefined") {
             return;
         }
@@ -37,7 +39,7 @@ class VoiceService {
 
         if (!SpeechRecognition) {
             console.error(
-                "[VoiceService] Speech Recognition is not supported in this browser."
+                "[VoiceService] Speech Recognition is not supported."
             );
 
             this.recognition = null;
@@ -45,105 +47,148 @@ class VoiceService {
         }
 
         try {
-            this.recognition = new SpeechRecognition();
+            this.recognition =
+                new SpeechRecognition();
 
-            // IMPORTANT:
-            // continuous=false makes Chrome reliably return the final
-            // transcript and prevents endless recognition sessions.
-            this.recognition.continuous = false;
+            /*
+             * IMPORTANT
+             *
+             * continuous = true:
+             * Allows longer sentences.
+             *
+             * interimResults = true:
+             * Shows live speech in the UI.
+             */
 
-            // Show partial words while user is speaking.
+            this.recognition.continuous = true;
             this.recognition.interimResults = true;
-
-            // Return multiple alternatives is unnecessary.
             this.recognition.maxAlternatives = 1;
 
-            // Default language.
-            this.recognition.lang = this.currentLanguage;
+            this.recognition.lang =
+                this.currentLanguage;
 
-            // ========================================================
+            // ====================================================
             // ON START
-            // ========================================================
+            // ====================================================
 
             this.recognition.onstart = () => {
                 console.log(
-                    "[VoiceService] 🎤 Speech recognition started"
+                    "[VoiceService] 🎤 Recognition started"
                 );
 
                 this.isListening = true;
-                this.manualStop = false;
 
                 if (this.callbacks.onStart) {
                     this.callbacks.onStart();
                 }
             };
 
-            // ========================================================
+            // ====================================================
             // ON RESULT
-            // ========================================================
+            // ====================================================
 
-            this.recognition.onresult = (event) => {
-                let finalText = "";
-                let interimText = "";
+            this.recognition.onresult = (
+                event
+            ) => {
+                let newFinalText = "";
+                let newInterimText = "";
 
                 for (
                     let i = event.resultIndex;
                     i < event.results.length;
                     i++
                 ) {
-                    const transcript =
-                        event.results[i][0].transcript;
+                    const result =
+                        event.results[i];
 
-                    if (event.results[i].isFinal) {
-                        finalText += transcript + " ";
+                    const transcript =
+                        result[0]?.transcript ||
+                        "";
+
+                    if (
+                        result.isFinal
+                    ) {
+                        newFinalText +=
+                            transcript + " ";
                     } else {
-                        interimText += transcript;
+                        newInterimText +=
+                            transcript;
                     }
                 }
 
-                // Add final transcript to accumulated text.
-                if (finalText.trim()) {
+                // ----------------------------------------------
+                // Save FINAL transcript
+                // ----------------------------------------------
+
+                if (
+                    newFinalText.trim()
+                ) {
                     this.accumulatedFinal +=
-                        finalText.trim() + " ";
+                        newFinalText.trim() +
+                        " ";
                 }
 
-                this.interimTranscript = interimText;
+                // ----------------------------------------------
+                // Save INTERIM transcript
+                // ----------------------------------------------
 
-                const completeText =
+                this.interimTranscript =
+                    newInterimText;
+
+                // ----------------------------------------------
+                // Combined transcript for UI
+                // ----------------------------------------------
+
+                const displayTranscript =
                     `${this.accumulatedFinal} ${this.interimTranscript}`
-                        .replace(/\s+/g, " ")
+                        .replace(
+                            /\s+/g,
+                            " "
+                        )
                         .trim();
 
                 console.log(
-                    "[VoiceService] Interim:",
-                    this.interimTranscript
+                    "[VoiceService] Transcript:",
+                    displayTranscript
                 );
 
-                console.log(
-                    "[VoiceService] Current transcript:",
-                    completeText
-                );
-
-                // Send transcript to UI.
-                if (this.callbacks.onResult) {
+                if (
+                    this.callbacks.onResult
+                ) {
                     this.callbacks.onResult({
-                        transcript: completeText,
-                        final: Boolean(finalText.trim()),
+                        transcript:
+                            displayTranscript,
+
+                        final:
+                            Boolean(
+                                newFinalText.trim()
+                            ),
                     });
                 }
 
-                // If browser has given us a FINAL result,
-                // wait a little before submitting.
-                if (finalText.trim()) {
+                // ----------------------------------------------
+                // FINAL RESULT
+                // ----------------------------------------------
+
+                if (
+                    newFinalText.trim()
+                ) {
+                    console.log(
+                        "[VoiceService] Final speech segment:",
+                        newFinalText.trim()
+                    );
+
                     this.scheduleSubmit();
                 }
             };
 
-            // ========================================================
-            // ON ERROR
-            // ========================================================
+            // ====================================================
+            // ERROR
+            // ====================================================
 
-            this.recognition.onerror = (event) => {
+            this.recognition.onerror = (
+                event
+            ) => {
                 console.error(
                     "[VoiceService] ❌ Recognition error:",
                     event.error
@@ -151,9 +196,12 @@ class VoiceService {
 
                 this.isListening = false;
 
-                let message = "Voice recognition failed.";
+                let message =
+                    "Voice recognition failed.";
 
-                switch (event.error) {
+                switch (
+                    event.error
+                ) {
                     case "not-allowed":
                         message =
                             "Microphone permission was denied. Please allow microphone access.";
@@ -171,7 +219,7 @@ class VoiceService {
 
                     case "audio-capture":
                         message =
-                            "Microphone could not be accessed. Check your microphone.";
+                            "Microphone could not be accessed. Please check your microphone.";
                         break;
 
                     case "network":
@@ -180,8 +228,8 @@ class VoiceService {
                         break;
 
                     case "aborted":
-                        // User stopped recognition.
-                        message = "Voice recognition stopped.";
+                        message =
+                            "Voice recognition stopped.";
                         break;
 
                     default:
@@ -189,46 +237,57 @@ class VoiceService {
                             `Voice recognition error: ${event.error}`;
                 }
 
-                if (this.callbacks.onError) {
+                if (
+                    this.callbacks.onError
+                ) {
                     this.callbacks.onError({
-                        error: event.error,
+                        error:
+                            event.error,
+
                         message,
                     });
                 }
             };
 
-            // ========================================================
-            // ON END
-            // ========================================================
+            // ====================================================
+            // END
+            // ====================================================
 
-            this.recognition.onend = () => {
-                console.log(
-                    "[VoiceService] Speech recognition ended."
-                );
+            this.recognition.onend =
+                () => {
+                    console.log(
+                        "[VoiceService] Recognition ended"
+                    );
 
-                this.isListening = false;
+                    this.isListening =
+                        false;
 
-                if (this.callbacks.onEnd) {
-                    this.callbacks.onEnd();
-                }
+                    /*
+                     * If recognition ended unexpectedly
+                     * while we have final text, submit it.
+                     */
 
-                // If we already have a final transcript and haven't
-                // submitted it yet, submit it now.
-                if (
-                    !this.manualStop &&
-                    this.accumulatedFinal.trim() &&
-                    !this.shouldSubmit
-                ) {
-                    this.submitFinalTranscript();
-                }
-            };
+                    if (
+                        !this.manualStop &&
+                        this.accumulatedFinal.trim() &&
+                        !this.shouldSubmit
+                    ) {
+                        this.submitFinalTranscript();
+                    }
+
+                    if (
+                        this.callbacks.onEnd
+                    ) {
+                        this.callbacks.onEnd();
+                    }
+                };
 
             console.log(
-                "[VoiceService] ✅ Speech recognition initialized"
+                "[VoiceService] ✅ Recognition initialized"
             );
         } catch (error) {
             console.error(
-                "[VoiceService] Failed to initialize recognition:",
+                "[VoiceService] Initialization failed:",
                 error
             );
 
@@ -240,116 +299,177 @@ class VoiceService {
     // START LISTENING
     // ============================================================
 
-    startListening(language = "en-IN", callbacks = {}) {
-        return new Promise((resolve, reject) => {
-            if (!this.recognition) {
-                const error =
-                    "Speech recognition is not supported. Please use Google Chrome or Microsoft Edge.";
-
-                console.error(
-                    "[VoiceService]",
-                    error
-                );
-
-                if (callbacks.onError) {
-                    callbacks.onError({
-                        error: "not-supported",
-                        message: error,
-                    });
-                }
-
-                reject(new Error(error));
-                return;
-            }
-
-            // Save callbacks.
-            this.callbacks = callbacks;
-
-            // Save language.
-            this.currentLanguage =
-                language || "en-IN";
-
-            // Convert common language codes to browser locale.
-            this.currentLanguage =
-                this.normalizeLanguage(
-                    this.currentLanguage
-                );
-
-            this.recognition.lang =
-                this.currentLanguage;
-
-            // Reset transcript state.
-            this.accumulatedFinal = "";
-            this.interimTranscript = "";
-            this.lastSubmittedText = "";
-
-            this.shouldSubmit = false;
-            this.manualStop = false;
-
-            if (this.submitTimer) {
-                clearTimeout(this.submitTimer);
-                this.submitTimer = null;
-            }
-
-            console.log(
-                "[VoiceService] 🎤 Starting microphone"
-            );
-
-            console.log(
-                "[VoiceService] Language:",
-                this.currentLanguage
-            );
-
-            try {
-                this.recognition.start();
-
-                resolve(true);
-            } catch (error) {
-                console.error(
-                    "[VoiceService] Start error:",
-                    error
-                );
-
-                // Chrome can throw InvalidStateError if start()
-                // is called while already running.
+    startListening(
+        language = "hi-IN",
+        callbacks = {}
+    ) {
+        return new Promise(
+            (resolve, reject) => {
                 if (
-                    error.name ===
-                    "InvalidStateError"
+                    !this.recognition
                 ) {
-                    console.warn(
-                        "[VoiceService] Recognition is already running."
+                    const error =
+                        "Speech recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.";
+
+                    console.error(
+                        "[VoiceService]",
+                        error
                     );
 
-                    resolve(true);
+                    if (
+                        callbacks.onError
+                    ) {
+                        callbacks.onError({
+                            error:
+                                "not-supported",
+
+                            message:
+                                error,
+                        });
+                    }
+
+                    reject(
+                        new Error(error)
+                    );
+
                     return;
                 }
 
-                if (callbacks.onError) {
-                    callbacks.onError({
-                        error: error.name,
-                        message:
-                            error.message ||
-                            "Could not start microphone.",
-                    });
+                // Save callbacks
+                this.callbacks =
+                    callbacks;
+
+                // Set language
+                this.currentLanguage =
+                    this.normalizeLanguage(
+                        language
+                    );
+
+                this.recognition.lang =
+                    this.currentLanguage;
+
+                console.log(
+                    "[VoiceService] Language:",
+                    this.currentLanguage
+                );
+
+                // Reset transcript
+                this.accumulatedFinal =
+                    "";
+
+                this.interimTranscript =
+                    "";
+
+                this.lastSubmittedText =
+                    "";
+
+                this.manualStop =
+                    false;
+
+                this.shouldSubmit =
+                    false;
+
+                // Clear previous timer
+                if (
+                    this.submitTimer
+                ) {
+                    clearTimeout(
+                        this.submitTimer
+                    );
+
+                    this.submitTimer =
+                        null;
                 }
 
-                reject(error);
+                try {
+                    /*
+                     * Chrome can throw InvalidStateError
+                     * if recognition is already running.
+                     */
+
+                    if (
+                        this.isListening
+                    ) {
+                        console.warn(
+                            "[VoiceService] Recognition already running."
+                        );
+
+                        resolve(true);
+
+                        return;
+                    }
+
+                    console.log(
+                        "[VoiceService] 🎤 Starting microphone..."
+                    );
+
+                    this.recognition.start();
+
+                    resolve(true);
+                } catch (error) {
+                    console.error(
+                        "[VoiceService] Start error:",
+                        error
+                    );
+
+                    if (
+                        error.name ===
+                        "InvalidStateError"
+                    ) {
+                        resolve(true);
+
+                        return;
+                    }
+
+                    if (
+                        callbacks.onError
+                    ) {
+                        callbacks.onError({
+                            error:
+                                error.name,
+
+                            message:
+                                error.message ||
+                                "Could not start microphone.",
+                        });
+                    }
+
+                    reject(error);
+                }
             }
-        });
+        );
     }
 
     // ============================================================
-    // SCHEDULE FINAL SUBMISSION
+    // WAIT BEFORE SUBMITTING
     // ============================================================
 
     scheduleSubmit() {
-        if (this.submitTimer) {
-            clearTimeout(this.submitTimer);
+        if (
+            this.submitTimer
+        ) {
+            clearTimeout(
+                this.submitTimer
+            );
         }
 
-        this.submitTimer = setTimeout(() => {
-            this.submitFinalTranscript();
-        }, 1000);
+        /*
+         * Wait for the user to finish speaking.
+         *
+         * This prevents:
+         *
+         * "PM Kisan..."
+         *
+         * from being submitted before:
+         *
+         * "PM Kisan mein registration
+         * kaise karein?"
+         */
+
+        this.submitTimer =
+            setTimeout(() => {
+                this.submitFinalTranscript();
+            }, 1200);
     }
 
     // ============================================================
@@ -357,55 +477,72 @@ class VoiceService {
     // ============================================================
 
     submitFinalTranscript() {
-        if (this.shouldSubmit) {
+        if (
+            this.shouldSubmit
+        ) {
             return;
         }
 
-        const text =
+        const finalText =
             this.accumulatedFinal
-                .replace(/\s+/g, " ")
+                .replace(
+                    /\s+/g,
+                    " "
+                )
                 .trim();
 
-        if (!text) {
+        if (!finalText) {
             console.warn(
-                "[VoiceService] No final transcript available."
+                "[VoiceService] No final transcript."
             );
+
             return;
         }
 
-        // Prevent duplicate submission.
+        // Prevent duplicate submission
         if (
-            text.toLowerCase() ===
+            finalText.toLowerCase() ===
             this.lastSubmittedText.toLowerCase()
         ) {
             console.warn(
                 "[VoiceService] Duplicate transcript ignored."
             );
+
             return;
         }
 
-        this.shouldSubmit = true;
-        this.lastSubmittedText = text;
+        this.shouldSubmit =
+            true;
+
+        this.lastSubmittedText =
+            finalText;
 
         console.log(
-            "[VoiceService] ================================="
+            "[VoiceService] =================================="
         );
 
         console.log(
             "[VoiceService] 🎤 FINAL QUERY:"
         );
 
-        console.log(text);
-
         console.log(
-            "[VoiceService] ================================="
+            finalText
         );
 
-        if (this.callbacks.onFinalTranscript) {
-            this.callbacks.onFinalTranscript(text);
+        console.log(
+            "[VoiceService] =================================="
+        );
+
+        if (
+            this.callbacks
+                .onFinalTranscript
+        ) {
+            this.callbacks.onFinalTranscript(
+                finalText
+            );
         }
 
-        // Stop recognition after final transcript.
+        // Stop microphone
         this.stopListening();
     }
 
@@ -414,15 +551,26 @@ class VoiceService {
     // ============================================================
 
     stopListening() {
-        this.manualStop = true;
-        this.isListening = false;
+        this.manualStop =
+            true;
 
-        if (this.submitTimer) {
-            clearTimeout(this.submitTimer);
-            this.submitTimer = null;
+        this.isListening =
+            false;
+
+        if (
+            this.submitTimer
+        ) {
+            clearTimeout(
+                this.submitTimer
+            );
+
+            this.submitTimer =
+                null;
         }
 
-        if (!this.recognition) {
+        if (
+            !this.recognition
+        ) {
             return;
         }
 
@@ -445,15 +593,26 @@ class VoiceService {
     // ============================================================
 
     abortListening() {
-        this.manualStop = true;
-        this.isListening = false;
+        this.manualStop =
+            true;
 
-        if (this.submitTimer) {
-            clearTimeout(this.submitTimer);
-            this.submitTimer = null;
+        this.isListening =
+            false;
+
+        if (
+            this.submitTimer
+        ) {
+            clearTimeout(
+                this.submitTimer
+            );
+
+            this.submitTimer =
+                null;
         }
 
-        if (!this.recognition) {
+        if (
+            !this.recognition
+        ) {
             return;
         }
 
@@ -475,22 +634,33 @@ class VoiceService {
     // LANGUAGE NORMALIZATION
     // ============================================================
 
-    normalizeLanguage(language) {
+    normalizeLanguage(
+        language
+    ) {
         if (!language) {
-            return "en-IN";
+            return "hi-IN";
         }
 
-        const lang = language.toLowerCase();
+        const value =
+            String(
+                language
+            ).toLowerCase();
 
         const languages = {
             en: "en-IN",
             english: "en-IN",
 
+            "en-in": "en-IN",
+
             hi: "hi-IN",
             hindi: "hi-IN",
 
+            "hi-in": "hi-IN",
+
             mr: "mr-IN",
             marathi: "mr-IN",
+
+            "mr-in": "mr-IN",
 
             gu: "gu-IN",
             gujarati: "gu-IN",
@@ -517,178 +687,278 @@ class VoiceService {
             odia: "or-IN",
         };
 
-        return languages[lang] || language;
+        return (
+            languages[value] ||
+            language
+        );
+    }
+
+    // ============================================================
+    // CHECK SUPPORT
+    // ============================================================
+
+    isSupported() {
+        if (
+            typeof window ===
+            "undefined"
+        ) {
+            return false;
+        }
+
+        return Boolean(
+            window.SpeechRecognition ||
+            window.webkitSpeechRecognition
+        );
     }
 
     // ============================================================
     // TEXT TO SPEECH
     // ============================================================
 
-    speak(text, language = "hi-IN") {
-        return new Promise((resolve, reject) => {
-            if (
-                typeof window === "undefined" ||
-                !window.speechSynthesis
-            ) {
-                console.warn(
-                    "[VoiceService] Speech synthesis unavailable."
-                );
-
-                resolve(false);
-                return;
-            }
-
-            if (!text || !text.trim()) {
-                resolve(false);
-                return;
-            }
-
-            try {
-                window.speechSynthesis.cancel();
-
-                const utterance =
-                    new SpeechSynthesisUtterance(
-                        text
-                    );
-
-                utterance.lang =
-                    this.normalizeLanguage(language);
-
-                utterance.rate = 0.95;
-                utterance.pitch = 1;
-                utterance.volume = 1;
-
-                const voices =
-                    window.speechSynthesis.getVoices();
-
-                const normalizedLanguage =
-                    this.normalizeLanguage(language)
-                        .toLowerCase();
-
-                const baseLanguage =
-                    normalizedLanguage.split("-")[0];
-
-                const matchingVoice =
-                    voices.find((voice) => {
-                        const voiceLang =
-                            voice.lang.toLowerCase();
-
-                        return (
-                            voiceLang ===
-                            normalizedLanguage
-                        );
-                    }) ||
-                    voices.find((voice) => {
-                        const voiceLang =
-                            voice.lang.toLowerCase();
-
-                        return voiceLang.startsWith(
-                            baseLanguage
-                        );
-                    });
-
-                if (matchingVoice) {
-                    utterance.voice =
-                        matchingVoice;
-                }
-
-                utterance.onstart = () => {
-                    this.isSpeakingState = true;
-                };
-
-                utterance.onend = () => {
-                    this.isSpeakingState = false;
-                    resolve(true);
-                };
-
-                utterance.onerror = (event) => {
-                    this.isSpeakingState = false;
-
-                    console.error(
-                        "[VoiceService] TTS error:",
-                        event
+    speak(
+        text,
+        language = "hi-IN"
+    ) {
+        return new Promise(
+            (resolve) => {
+                if (
+                    typeof window ===
+                        "undefined" ||
+                    !window.speechSynthesis
+                ) {
+                    console.warn(
+                        "[VoiceService] Speech synthesis unavailable."
                     );
 
                     resolve(false);
-                };
 
-                window.speechSynthesis.speak(
-                    utterance
-                );
+                    return;
+                }
 
-                console.log(
-                    "[VoiceService] 🔊 Speaking response"
-                );
-            } catch (error) {
-                this.isSpeakingState = false;
+                if (
+                    !text ||
+                    !String(
+                        text
+                    ).trim()
+                ) {
+                    resolve(false);
 
-                console.error(
-                    "[VoiceService] TTS exception:",
-                    error
-                );
+                    return;
+                }
 
-                reject(error);
+                try {
+                    window.speechSynthesis.cancel();
+
+                    const utterance =
+                        new SpeechSynthesisUtterance(
+                            text
+                        );
+
+                    const voiceLanguage =
+                        this.normalizeLanguage(
+                            language
+                        );
+
+                    utterance.lang =
+                        voiceLanguage;
+
+                    utterance.rate =
+                        0.95;
+
+                    utterance.pitch =
+                        1;
+
+                    utterance.volume =
+                        1;
+
+                    const voices =
+                        window
+                            .speechSynthesis
+                            .getVoices();
+
+                    const targetLanguage =
+                        voiceLanguage.toLowerCase();
+
+                    const baseLanguage =
+                        targetLanguage.split(
+                            "-"
+                        )[0];
+
+                    let selectedVoice =
+                        voices.find(
+                            (
+                                voice
+                            ) =>
+                                voice.lang?.toLowerCase() ===
+                                targetLanguage
+                        );
+
+                    if (
+                        !selectedVoice
+                    ) {
+                        selectedVoice =
+                            voices.find(
+                                (
+                                    voice
+                                ) =>
+                                    voice.lang
+                                        ?.toLowerCase()
+                                        .startsWith(
+                                            baseLanguage
+                                        )
+                            );
+                    }
+
+                    if (
+                        selectedVoice
+                    ) {
+                        utterance.voice =
+                            selectedVoice;
+                    }
+
+                    utterance.onstart =
+                        () => {
+                            this.isSpeakingState =
+                                true;
+
+                            console.log(
+                                "[VoiceService] 🔊 TTS started"
+                            );
+                        };
+
+                    utterance.onend =
+                        () => {
+                            this.isSpeakingState =
+                                false;
+
+                            console.log(
+                                "[VoiceService] 🔊 TTS ended"
+                            );
+
+                            resolve(true);
+                        };
+
+                    utterance.onerror =
+                        (
+                            error
+                        ) => {
+                            this.isSpeakingState =
+                                false;
+
+                            console.error(
+                                "[VoiceService] TTS error:",
+                                error
+                            );
+
+                            resolve(false);
+                        };
+
+                    window.speechSynthesis.speak(
+                        utterance
+                    );
+                } catch (error) {
+                    this.isSpeakingState =
+                        false;
+
+                    console.error(
+                        "[VoiceService] TTS exception:",
+                        error
+                    );
+
+                    resolve(false);
+                }
             }
-        });
+        );
     }
 
     // ============================================================
     // PLAY AUDIO URL
     // ============================================================
 
-    playAudioUrl(url) {
-        return new Promise((resolve, reject) => {
-            if (!url) {
-                reject(
-                    new Error(
-                        "No audio URL provided."
-                    )
-                );
-                return;
-            }
-
-            try {
-                const audio =
-                    new Audio(url);
-
-                audio.onplay = () => {
-                    this.isSpeakingState = true;
-                };
-
-                audio.onended = () => {
-                    this.isSpeakingState = false;
-                    resolve(true);
-                };
-
-                audio.onerror = (error) => {
-                    this.isSpeakingState = false;
-
-                    console.error(
-                        "[VoiceService] Audio error:",
-                        error
-                    );
-
+    playAudioUrl(
+        url
+    ) {
+        return new Promise(
+            (
+                resolve,
+                reject
+            ) => {
+                if (!url) {
                     reject(
                         new Error(
-                            "Could not play audio."
+                            "No audio URL provided."
                         )
                     );
-                };
 
-                audio.play().catch((error) => {
-                    this.isSpeakingState = false;
+                    return;
+                }
 
-                    console.error(
-                        "[VoiceService] Audio play error:",
-                        error
-                    );
+                try {
+                    const audio =
+                        new Audio(
+                            url
+                        );
 
+                    audio.preload =
+                        "auto";
+
+                    audio.onplay =
+                        () => {
+                            this.isSpeakingState =
+                                true;
+                        };
+
+                    audio.onended =
+                        () => {
+                            this.isSpeakingState =
+                                false;
+
+                            resolve(
+                                true
+                            );
+                        };
+
+                    audio.onerror =
+                        (error) => {
+                            this.isSpeakingState =
+                                false;
+
+                            console.error(
+                                "[VoiceService] Audio error:",
+                                error
+                            );
+
+                            reject(
+                                new Error(
+                                    "Could not play audio."
+                                )
+                            );
+                        };
+
+                    audio
+                        .play()
+                        .catch(
+                            (
+                                error
+                            ) => {
+                                this.isSpeakingState =
+                                    false;
+
+                                console.error(
+                                    "[VoiceService] Audio playback error:",
+                                    error
+                                );
+
+                                reject(
+                                    error
+                                );
+                            }
+                        );
+                } catch (error) {
                     reject(error);
-                });
-            } catch (error) {
-                reject(error);
+                }
             }
-        });
+        );
     }
 
     // ============================================================
@@ -700,30 +970,46 @@ class VoiceService {
         language = "hi"
     ) {
         try {
-            if (!text || !text.trim()) {
+            if (
+                !text ||
+                !String(
+                    text
+                ).trim()
+            ) {
                 return false;
             }
 
             const API_BASE =
                 "https://farmerai-2nic.onrender.com/api";
 
+            console.log(
+                "[VoiceService] Requesting server TTS..."
+            );
+
             const response =
                 await fetch(
                     `${API_BASE}/voice/synthesize`,
                     {
                         method: "POST",
+
                         headers: {
                             "Content-Type":
                                 "application/json",
                         },
-                        body: JSON.stringify({
-                            text,
-                            language,
-                        }),
+
+                        body:
+                            JSON.stringify(
+                                {
+                                    text,
+                                    language,
+                                }
+                            ),
                     }
                 );
 
-            if (!response.ok) {
+            if (
+                !response.ok
+            ) {
                 throw new Error(
                     `TTS request failed: ${response.status}`
                 );
@@ -732,7 +1018,9 @@ class VoiceService {
             const data =
                 await response.json();
 
-            if (data.audio_url) {
+            if (
+                data?.audio_url
+            ) {
                 await this.playAudioUrl(
                     data.audio_url
                 );
@@ -740,7 +1028,9 @@ class VoiceService {
                 return true;
             }
 
-            if (data.url) {
+            if (
+                data?.url
+            ) {
                 await this.playAudioUrl(
                     data.url
                 );
@@ -765,39 +1055,35 @@ class VoiceService {
 
     stopSpeaking() {
         if (
-            typeof window !== "undefined" &&
+            typeof window !==
+                "undefined" &&
             window.speechSynthesis
         ) {
             window.speechSynthesis.cancel();
         }
 
-        this.isSpeakingState = false;
+        this.isSpeakingState =
+            false;
     }
 
     // ============================================================
-    // CHECK SPEAKING
+    // IS SPEAKING
     // ============================================================
 
     isSpeaking() {
         return this.isSpeakingState;
     }
-
-    // ============================================================
-    // CHECK SUPPORT
-    // ============================================================
-
-    isSupported() {
-        if (typeof window === "undefined") {
-            return false;
-        }
-
-        return Boolean(
-            window.SpeechRecognition ||
-            window.webkitSpeechRecognition
-        );
-    }
 }
 
-const voiceService = new VoiceService();
+// ================================================================
+// CREATE SINGLE INSTANCE
+// ================================================================
+
+const voiceService =
+    new VoiceService();
+
+// ================================================================
+// DEFAULT EXPORT
+// ================================================================
 
 export default voiceService;
